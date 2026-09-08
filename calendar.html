@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#080807" />
+  <meta name="description" content="Rerun screening calendar for Los Angeles repertory film." />
+  <meta name="rerun-build" content="2026-09-08-ac-related-events-fix" />
+  <title>Calendar · Rerun</title>
+  <link rel="icon" href="assets/rerun-mark.png" type="image/png" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght,SOFT,WONK@9..144,400..700,0..100,0..1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+  <script src="app.js?v=20260908-tagline-deploy" defer></script>
+</head>
+<body data-page="calendar" class="calendar-page">
+  <div class="grain" aria-hidden="true"></div>
+  <header class="site-header">
+    <a class="brand" href="index.html" aria-label="Rerun home"><img class="brand-logo" src="assets/rerun-logo.png" alt="Rerun" /></a>
+    <nav aria-label="Main navigation">
+      <a class="nav-link" href="index.html">Browse</a>
+      <a class="nav-link active" href="calendar.html" aria-current="page">Calendar</a>
+      <button class="nav-link" type="button" data-view="saved">Saved <span class="saved-count" aria-label="saved films count">0</span></button>
+      <a class="nav-link" href="index.html#about">About</a>
+    </nav>
+    <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-nav"><span></span><span></span><span class="sr-only">Open menu</span></button>
+    <div class="mobile-nav" id="mobile-nav" hidden>
+      <a class="nav-link" href="index.html">Browse</a>
+      <a class="nav-link active" href="calendar.html" aria-current="page">Calendar</a>
+      <button class="nav-link" type="button" data-view="saved">Saved <span class="saved-count">0</span></button>
+      <a class="nav-link" href="index.html#about">About</a>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="calendar-hero">
+      <div class="hero-topline"><div class="eyebrow"><span class="live-dot"></span> Live listings</div><div class="eyebrow marquee-label">Los Angeles / screening calendar</div></div>
+    <div class="calendar-page-heading"><div class="calendar-branding"><img src="assets/rerun-logo.png" alt="Rerun" /><span>the repertory film guide</span></div><span class="eyebrow">01 / Calendar</span><h1>Make a night<br><em>of it.</em></h1><p>Browse every upcoming repertory screening in one place. Select a date to see what is playing.</p></div>
+    </section>
+
+    <section class="browse calendar-shell" id="screenings" aria-labelledby="calendar-page-title">
+      <div class="section-top"><div><span class="eyebrow">Los Angeles</span><h2 id="calendar-page-title">Upcoming<br><em>screenings.</em></h2></div><div class="location-control"><label for="city-select">Your city</label><select id="city-select"><option value="los-angeles">Los Angeles</option><option value="new-york" disabled>New York · soon</option><option value="san-francisco" disabled>San Francisco · soon</option><option value="arcata" disabled>Arcata · soon</option></select></div></div>
+      <div class="toolbar"><label class="search-box"><span class="sr-only">Search films, directors, or venues</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg><input id="search-input" type="search" placeholder="Search films, directors, venues" autocomplete="off" /></label><label class="sort-control" for="sort-select"><span>Order by</span><select id="sort-select"><option value="time">Soonest showtime</option><option value="venue">Theatre</option></select></label><div class="listing-meta calendar-page-meta"><p id="result-count">Loading screenings</p><div class="feed-health"><span class="data-status" id="data-status" role="status" aria-live="polite">Waiting for complete live index…</span><button class="refresh-button" id="refresh-button" type="button" title="Recheck all live sources" aria-label="Recheck all live sources"><span class="refresh-icon" aria-hidden="true">↻</span><span class="refresh-label sr-only">Refresh live screenings</span></button></div></div></div>
+      <div class="screening-grid" id="screening-grid" hidden aria-live="polite"></div>
+      <div class="calendar-view" id="calendar-view">
+        <div class="calendar-heading"><div><span class="eyebrow">Screening calendar</span><h3 id="calendar-title">Upcoming screenings</h3></div><div class="calendar-controls"><button type="button" id="calendar-prev" aria-label="Previous month">←</button><button type="button" id="calendar-next" aria-label="Next month">→</button></div></div>
+        <div class="calendar-weekdays" aria-hidden="true"><span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span></div>
+        <div class="calendar-grid" id="calendar-grid" role="grid" aria-label="Screening calendar"></div>
+        <div class="calendar-selection" id="calendar-selection" aria-live="polite"></div>
+        <div class="calendar-screening-grid screening-grid" id="calendar-screening-grid"></div>
+      </div>
+      <div class="empty-state" id="empty-state" hidden><div>◌</div><h3>No screenings found.</h3><p>Try a different date or search term.</p><button type="button" id="clear-filters">Clear filters</button></div>
+    </section>
+  </main>
+
+  <dialog id="screening-dialog"><button class="dialog-close" type="button" aria-label="Close screening details">×</button><div id="dialog-content"></div></dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <footer><span class="footer-brand"><img src="assets/rerun-mark.png" alt="" aria-hidden="true" /><span>Rerun® / A product concept by Ameer Hassan</span></span><a class="instagram-link" href="https://www.instagram.com/1rerun/" target="_blank" rel="noopener noreferrer" aria-label="Follow Rerun on Instagram"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"></rect><circle cx="12" cy="12" r="4"></circle><circle cx="17.5" cy="6.8" r="1"></circle></svg><span>Instagram</span></a><span>Curated for the big screen</span><a href="#top">Back to top ↑</a></footer>
+  <template id="screening-card-template"><article class="screening-card"><div class="card-poster"><img class="poster-image" alt="" loading="lazy" /><span class="poster-kicker"></span><strong class="poster-title"></strong><small class="poster-format"></small><button class="save-button" type="button" aria-label="Save film"><span>♡</span></button></div><div class="card-body"><div class="card-heading"><div><h3 class="film-title"></h3><p class="film-meta"></p></div><span class="distance"></span></div><div class="card-showing"><span class="showing-date"></span><strong class="showing-time"></strong><span class="showing-venue"></span></div><a class="source-label" title="" target="_blank" rel="noopener noreferrer"></a><div class="card-actions"><button class="details-button" type="button">View details <span>↗</span></button><a class="ticket-link" target="_blank" rel="noopener noreferrer">Tickets <span>↗</span></a></div></div></article></template>
+</body>
+</html>

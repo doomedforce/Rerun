@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#080807" />
+  <meta name="description" content="Rerun helps you find verified repertory film screenings in Los Angeles." />
+  <meta name="rerun-build" content="2026-09-08-ac-related-events-fix" />
+  <title>Rerun — Find the next great screening.</title>
+  <link rel="icon" href="assets/rerun-mark.png" type="image/png" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght,SOFT,WONK@9..144,400..700,0..100,0..1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+  <script src="app.js?v=20260908-tagline-deploy" defer></script>
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="Rerun home"><img class="brand-logo" src="assets/rerun-logo.png" alt="Rerun" /></a>
+    <nav aria-label="Main navigation">
+      <button class="nav-link active" type="button" data-view="browse">Browse</button>
+      <a class="nav-link" href="calendar.html">Calendar</a>
+      <button class="nav-link" type="button" data-view="saved">Saved <span class="saved-count" aria-label="saved films count">0</span></button>
+      <a class="nav-link" href="#about">About</a>
+    </nav>
+    <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-nav"><span></span><span></span><span class="sr-only">Open menu</span></button>
+    <div class="mobile-nav" id="mobile-nav" hidden>
+      <button class="nav-link active" type="button" data-view="browse">Browse</button>
+      <a class="nav-link" href="calendar.html">Calendar</a>
+      <button class="nav-link" type="button" data-view="saved">Saved <span class="saved-count">0</span></button>
+      <a class="nav-link" href="#about">About</a>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-topline"><div class="eyebrow"><span class="live-dot"></span> Live listings</div><div class="eyebrow marquee-label">Live in Los Angeles / more cities soon</div></div>
+      <div class="hero-main">
+        <div class="hero-copy">
+          <div class="hero-branding"><img src="assets/rerun-logo.png" alt="Rerun" /><span>the repertory film guide</span></div>
+          <h1>See it big<br><em>this time.</em></h1>
+          <p>Rerun makes it easy to find the films you love—or missed—playing on a big screen near you.</p>
+        </div>
+      </div>
+      <div class="hero-bottom"><span>Curated screenings / local cinemas / new reasons to go out</span><a href="#screenings">Find a screening <span>↓</span></a></div>
+    </section>
+
+    <section class="browse" id="screenings" aria-labelledby="browse-title">
+      <div class="section-top"><div><span class="eyebrow">01 / Browse screenings</span><h2 id="browse-title">What's on<br><em>today.</em></h2></div><div class="location-control"><label for="city-select">Your city</label><select id="city-select"><option value="los-angeles">Los Angeles</option><option value="new-york" disabled>New York · soon</option><option value="san-francisco" disabled>San Francisco · soon</option><option value="arcata" disabled>Arcata · soon</option></select></div></div>
+      <div class="toolbar">
+        <label class="search-box"><span class="sr-only">Search films, directors, or venues</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg><input id="search-input" type="search" placeholder="Search films, directors, venues" autocomplete="off" /></label><label class="sort-control" for="sort-select"><span>Order by</span><select id="sort-select"><option value="time">Soonest showtime</option><option value="venue">Theatre</option></select></label>
+        <div class="day-navigator" aria-label="Choose screening day"><button class="day-arrow" type="button" id="day-prev" aria-label="Previous day">←</button><div class="day-label"><span class="eyebrow" id="day-kicker">Today</span><strong id="day-label">Loading date</strong></div><button class="day-arrow" type="button" id="day-next" aria-label="Next day">→</button><a class="calendar-button" href="calendar.html">Calendar <span>↗</span></a></div>
+      </div>
+      <div class="listing-meta"><p id="result-count">0 screenings</p><div class="feed-health"><span class="data-status" id="data-status" role="status" aria-live="polite">Waiting for complete live index…</span><button class="refresh-button" id="refresh-button" type="button" title="Recheck all live sources" aria-label="Recheck all live sources"><span class="refresh-icon" aria-hidden="true">↻</span><span class="refresh-label sr-only">Refresh live screenings</span></button></div></div>
+      <div class="screening-grid" id="screening-grid" aria-live="polite"></div>
+      <div class="calendar-view" id="calendar-view" hidden>
+        <div class="calendar-heading">
+          <div><span class="eyebrow">Screening calendar</span><h3 id="calendar-title">Upcoming screenings</h3></div>
+          <div class="calendar-controls"><button type="button" id="calendar-prev" aria-label="Previous month">←</button><button type="button" id="calendar-next" aria-label="Next month">→</button></div>
+        </div>
+        <div class="calendar-weekdays" aria-hidden="true"><span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span></div>
+        <div class="calendar-grid" id="calendar-grid" role="grid" aria-label="Screening calendar"></div>
+        <div class="calendar-selection" id="calendar-selection" aria-live="polite"></div>
+        <div class="calendar-screening-grid screening-grid" id="calendar-screening-grid"></div>
+      </div>
+      <div class="empty-state" id="empty-state" hidden><div>◌</div><h3>No screenings found.</h3><p>Try a different city, date, or search term.</p><button type="button" id="clear-filters">Clear filters</button></div>
+    </section>
+
+    <section class="save-banner">
+      <div><span class="eyebrow">Your watchlist</span><h2>Never miss<br>the <em>rerun.</em></h2></div>
+      <p>Save a film or venue and Rerun will keep your next screening easy to find.</p>
+      <button class="outline-button" type="button" data-view="saved">View saved films <span>↗</span></button>
+    </section>
+
+    <section class="about" id="about" aria-labelledby="about-title">
+      <div class="eyebrow">02 / About Rerun</div>
+      <div class="about-grid"><h2 id="about-title">A better way to<br><em>go see a movie.</em></h2><div><p class="about-lead">The films worth leaving the house for are often the hardest to find.</p><p>Rerun brings repertory programs, revival screenings, filmmaker series, and local cinema calendars into one calm, useful place. No endless venue tabs. No discovering the perfect screening after it already happened.</p><div class="about-points"><span>01 / Nearby first</span><span>02 / Film-led</span><span>03 / Built for plans</span></div><p class="image-note">Los Angeles is the first live market. Listings are checked against official <a href="https://www.americancinematheque.com/now-showing/" target="_blank" rel="noopener noreferrer">American Cinematheque</a>, <a href="https://ticketing.uswest.veezi.com/sessions/?siteToken=fmtswb0qqbym3de6c4bbsqj89m" target="_blank" rel="noopener noreferrer">New Beverly</a>, <a href="https://www.vistatheaterhollywood.com/schedule/" target="_blank" rel="noopener noreferrer">Vista Theater Hollywood</a>, and <a href="https://vidiotsfoundation.org/coming-soon/" target="_blank" rel="noopener noreferrer">Vidiots</a> program pages. Always verify showtime, ticket availability, and image rights on the venue page before you go.</p></div></div>
+    </section>
+
+    <section class="newsletter" aria-labelledby="newsletter-title"><div><span class="eyebrow">03 / Stay in the loop</span><h2 id="newsletter-title">A good film<br>is worth an <em>alert.</em></h2></div><form id="newsletter-form"><label for="email">Get the best screenings in your inbox.</label><div class="email-field"><input id="email" type="email" placeholder="you@example.com" required /><button type="submit" aria-label="Subscribe">↗</button></div><small id="form-message" role="status"></small></form></section>
+  </main>
+
+  <dialog id="screening-dialog"><button class="dialog-close" type="button" aria-label="Close screening details">×</button><div id="dialog-content"></div></dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <footer><span class="footer-brand"><img src="assets/rerun-mark.png" alt="" aria-hidden="true" /><span>Rerun® / A product concept by Ameer Hassan</span></span><a class="instagram-link" href="https://www.instagram.com/1rerun/" target="_blank" rel="noopener noreferrer" aria-label="Follow Rerun on Instagram"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"></rect><circle cx="12" cy="12" r="4"></circle><circle cx="17.5" cy="6.8" r="1"></circle></svg><span>Instagram</span></a><span>Curated for the big screen</span><a href="#top">Back to top ↑</a></footer>
+
+  <template id="screening-card-template"><article class="screening-card"><div class="card-poster"><img class="poster-image" alt="" loading="lazy" /><span class="poster-kicker"></span><strong class="poster-title"></strong><small class="poster-format"></small><button class="save-button" type="button" aria-label="Save film"><span>♡</span></button></div><div class="card-body"><div class="card-heading"><div><h3 class="film-title"></h3><p class="film-meta"></p></div><span class="distance"></span></div><div class="card-showing"><span class="showing-date"></span><strong class="showing-time"></strong><span class="showing-venue"></span></div><a class="source-label" title="" target="_blank" rel="noopener noreferrer"></a><div class="card-actions"><button class="details-button" type="button">View details <span>↗</span></button><a class="ticket-link" target="_blank" rel="noopener noreferrer">Tickets <span>↗</span></a></div></div></article></template>
+</body>
+</html>

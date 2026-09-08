@@ -1,0 +1,17 @@
+{
+  "name": "Rerun — Repertory Film Guide",
+  "short_name": "Rerun",
+  "description": "Find verified repertory film screenings in Los Angeles.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#080807",
+  "theme_color": "#080807",
+  "icons": [
+    {
+      "src": "assets/rerun-mark.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
