@@ -6,8 +6,10 @@ const { URL } = require('node:url');
 
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
-const HOST = process.env.RERUN_HOST || '0.0.0.0';
-const PORT = Number(process.env.RERUN_PORT || process.env.PORT || 4173);
+// Render supplies PORT and requires a public 0.0.0.0 bind. Hosted settings
+// must win over local-development overrides that may be present in the env.
+const HOST = process.env.PORT ? '0.0.0.0' : (process.env.RERUN_HOST || '0.0.0.0');
+const PORT = Number(process.env.PORT || process.env.RERUN_PORT || 4173);
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',

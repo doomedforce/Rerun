@@ -26,8 +26,11 @@ except ImportError:  # pragma: no cover - only relevant when embedded elsewhere
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
-HOST = os.environ.get("RERUN_HOST", "0.0.0.0")
-PORT = int(os.environ.get("RERUN_PORT", os.environ.get("PORT", "4173")))
+# Render supplies PORT and requires a public 0.0.0.0 bind. Let that hosted
+# configuration win over local-development overrides that may be present in
+# the service environment.
+HOST = "0.0.0.0" if os.environ.get("PORT") else os.environ.get("RERUN_HOST", "0.0.0.0")
+PORT = int(os.environ.get("PORT") or os.environ.get("RERUN_PORT") or "4173")
 AUTO_REFRESH = os.environ.get("RERUN_AUTO_REFRESH", "1").lower() not in {"0", "false", "no"}
 BLOCKED_STATIC = {
     "/server.py",
@@ -43,8 +46,8 @@ BLOCKED_STATIC = {
 REFRESH_LOCK = threading.Lock()
 IMAGE_CACHE = {}
 IMAGE_CACHE_LOCK = threading.Lock()
-IMAGE_CACHE_LIMIT = 64
-IMAGE_MAX_BYTES = 8 * 1024 * 1024
+IMAGE_CACHE_LIMIT = 24
+IMAGE_MAX_BYTES = 4 * 1024 * 1024
 IMAGE_ALLOWED_HOSTS = {
     "americancinematheque.com",
     "assets.americancinematheque.com",
@@ -323,8 +326,11 @@ class RerunHandler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         path = parsed.path
         if path == "/api/health":
-            with REFRESH_LOCK:
-                meta = current_refresh_meta()
+            # Never wait on the refresh lock here. Render may use this endpoint
+            # as the service health check while a full official-source crawl is
+            # running; blocking would make a healthy process look unavailable
+            # and can produce a platform-level 502.
+            meta = current_refresh_meta()
             self.send_json(
                 200,
                 {

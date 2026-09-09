@@ -5,14 +5,11 @@
     "city": "los-angeles",
     "url": "https://www.americancinematheque.com/now-showing/",
     "adapter": "american_cinematheque",
-    "lastChecked": "2026-09-08T22:47:49.433632Z",
-    "status": "verified",
-    "eventCount": 80,
-    "pagesChecked": 363,
-    "durationMs": 103052,
-    "errors": [],
-    "warnings": [],
-    "required": true
+    "lastChecked": "2026-09-07T00:00:00Z",
+    "status": "seed",
+    "eventCount": 12,
+    "pagesChecked": 0,
+    "errors": []
   },
   {
     "id": "new-beverly",
@@ -23,14 +20,11 @@
     "sessionsUrl": "https://ticketing.uswest.veezi.com/sessions/?siteToken=fmtswb0qqbym3de6c4bbsqj89m",
     "adapter": "new_beverly",
     "required": false,
-    "sourceMode": "veezi",
-    "lastChecked": "2026-09-08T22:47:48.807692Z",
-    "status": "verified",
-    "eventCount": 39,
-    "pagesChecked": 41,
-    "durationMs": 841,
-    "errors": [],
-    "warnings": []
+    "lastChecked": "2026-09-07T00:00:00Z",
+    "status": "seed",
+    "eventCount": 18,
+    "pagesChecked": 0,
+    "errors": []
   },
   {
     "id": "vista-theater",
@@ -40,36 +34,23 @@
     "scheduleUrl": "https://www.vistatheaterhollywood.com/schedule/",
     "sessionsUrl": "https://ticketing.uswest.veezi.com/sessions/?siteToken=20xhpa3yt2hhkwt4zjvfcwsaww",
     "adapter": "vista_theater",
-    "lastChecked": "2026-09-08T22:47:49.186099Z",
-    "status": "verified",
-    "eventCount": 76,
-    "pagesChecked": 21,
-    "durationMs": 4498,
-    "errors": [],
-    "warnings": [
-      "https://www.vistatheaterhollywood.com/movies/navy-spy-bank-alarm/: HTTP Error 404: Not Found",
-      "https://www.vistatheaterhollywood.com/movies/silent-feminists-america-s-first-women-directors/: HTTP Error 404: Not Found",
-      "https://www.vistatheaterhollywood.com/movies/bulldog-drummond-comes-back-bulldog-s-bride/: HTTP Error 404: Not Found",
-      "https://www.vistatheaterhollywood.com/movies/ken-russell-s-the-devils/: HTTP Error 404: Not Found"
-    ],
-    "required": true
+    "lastChecked": "2026-09-07T00:00:00Z",
+    "status": "seed",
+    "eventCount": 0,
+    "pagesChecked": 0,
+    "errors": []
   },
   {
     "id": "vidiots",
     "name": "Vidiots",
     "city": "los-angeles",
-    "url": "https://vidiotsfoundation.org/",
-    "scheduleUrl": "https://vidiotsfoundation.org/coming-soon/",
-    "partnerUrl": "https://la.teentix.org/venues/vidiots/",
+    "url": "https://vidiotsfoundation.org/coming-soon/",
     "adapter": "vidiots",
     "required": false,
-    "sourceMode": "official",
-    "lastChecked": "2026-09-08T22:47:49.355209Z",
-    "status": "verified",
-    "eventCount": 84,
-    "pagesChecked": 51,
-    "durationMs": 11355,
-    "errors": [],
-    "warnings": []
+    "lastChecked": "2026-09-07T00:00:00Z",
+    "status": "seed",
+    "eventCount": 0,
+    "pagesChecked": 0,
+    "errors": []
   }
 ]
