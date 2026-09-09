@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -19,7 +20,8 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 REFRESH_TTL_SECONDS = int(os.environ.get("RERUN_REFRESH_TTL_SECONDS", "1800"))
 RETRY_BACKOFF_SECONDS = int(os.environ.get("RERUN_REFRESH_RETRY_SECONDS", "600"))
-FEED_POLICY_VERSION = 12
+FEED_POLICY_VERSION = 13
+LOCK_PATH = DATA_DIR / ".refresh.lock"
 
 
 def read_json(filename: str, fallback):
@@ -35,6 +37,24 @@ def write_json(filename: str, value) -> None:
     temporary = target.with_name(f".{target.name}.tmp")
     temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     temporary.replace(target)
+
+
+@contextmanager
+def refresh_file_lock():
+    """Serialize refreshes across worker, server, and manual CLI processes."""
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with LOCK_PATH.open("a+", encoding="utf-8") as handle:
+        try:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except ImportError:  # pragma: no cover - Windows fallback
+            yield
 
 
 def utc_now() -> datetime:
@@ -95,7 +115,7 @@ def official_venues() -> list[dict]:
     return venues
 
 
-def refresh_los_angeles(now: datetime | None = None, force: bool = False) -> dict:
+def _refresh_los_angeles(now: datetime | None = None, force: bool = False) -> dict:
     started = utc_now()
     result = scrape_los_angeles(now=now or started.astimezone(LA_TZ), force=force)
     existing = read_json("screenings.json", [])
@@ -161,7 +181,25 @@ def refresh_los_angeles(now: datetime | None = None, force: bool = False) -> dic
         meta["nextRetryAt"] = (utc_now() + timedelta(seconds=RETRY_BACKOFF_SECONDS)).isoformat().replace("+00:00", "Z")
     write_json("sources.json", result.get("sources", []))
     write_json("last-refresh.json", meta)
+    write_json(
+        "snapshot.json",
+        {
+            "schemaVersion": 1,
+            "catalogVersion": checked_at,
+            "generatedAt": utc_now().isoformat().replace("+00:00", "Z"),
+            "verified": status == "ok",
+            "screenings": merged,
+            "venues": official_venues(),
+            "sources": result.get("sources", []),
+            "meta": meta,
+        },
+    )
     return {**result, "meta": meta, "wroteEvents": wrote_events}
+
+
+def refresh_los_angeles(now: datetime | None = None, force: bool = False) -> dict:
+    with refresh_file_lock():
+        return _refresh_los_angeles(now=now, force=force)
 
 
 def main() -> None:

@@ -38,7 +38,7 @@ const toast = document.querySelector('#toast');
 const mobileNav = document.querySelector('#mobile-nav');
 const menuButton = document.querySelector('.menu-button');
 const dataStatus = document.querySelector('#data-status');
-let refreshButton = document.querySelector('#refresh-button');
+const refreshButton = null;
 const calendarView = document.querySelector('#calendar-view');
 const calendarTitle = document.querySelector('#calendar-title');
 const calendarGrid = document.querySelector('#calendar-grid');
@@ -51,19 +51,6 @@ const dayNext = document.querySelector('#day-next');
 const dayKicker = document.querySelector('#day-kicker');
 const dayLabel = document.querySelector('#day-label');
 const browseDayWord = document.querySelector('#browse-day-word');
-
-function ensureRefreshButton() {
-  if (refreshButton || !dataStatus) return refreshButton;
-  refreshButton = document.createElement('button');
-  refreshButton.id = 'refresh-button';
-  refreshButton.className = 'refresh-button';
-  refreshButton.type = 'button';
-  refreshButton.title = 'Recheck all live sources';
-  refreshButton.setAttribute('aria-label', 'Recheck all live sources');
-  refreshButton.innerHTML = '<span class="refresh-icon" aria-hidden="true">↻</span><span class="refresh-label sr-only">Refresh live screenings</span>';
-  dataStatus.insertAdjacentElement('afterend', refreshButton);
-  return refreshButton;
-}
 
 function ensureLogoFallbacks() {
   document.querySelectorAll('img').forEach((image) => {
@@ -82,7 +69,6 @@ function ensureLogoFallbacks() {
   });
 }
 
-ensureRefreshButton();
 ensureLogoFallbacks();
 
 function apiUrl(pathname) {
@@ -100,13 +86,12 @@ function imageUrl(image) {
   }
 }
 
-function screeningsApiPath(forceRefresh = false) {
+function screeningsApiPath() {
   const params = new URLSearchParams({ city: state.city, limit: '500' });
   // Browse only needs the selected day; calendar/saved views need the full
   // upcoming catalog. Keeping this filter server-side makes the completed
   // live response smaller and faster to render.
   if (state.view === 'browse') params.set('dateKey', state.selectedDate);
-  if (forceRefresh) params.set('refresh', '1');
   return apiUrl(`/api/screenings?${params.toString()}`);
 }
 
@@ -584,15 +569,13 @@ async function loadScreenings(forceRefresh = false) {
     setLoadingState('Waiting for complete live index · open with the Python server');
     return false;
   }
-  if (forceRefresh) {
-    window.clearTimeout(retryTimer);
-    retryTimer = null;
-  }
+  window.clearTimeout(retryTimer);
+  retryTimer = null;
   const requestId = ++apiRequestId;
   setRefreshBusy(true);
-  setLoadingState(forceRefresh ? 'Refreshing official feeds…' : 'Indexing official feeds…');
+  setLoadingState('Loading the latest verified index…');
   try {
-    const response = await fetch(screeningsApiPath(forceRefresh), { headers: { Accept: 'application/json' } });
+    const response = await fetch(screeningsApiPath(), { headers: { Accept: 'application/json' } });
     const payload = await response.json().catch(() => ({}));
     if (requestId !== apiRequestId) return;
     if (!response.ok) {
@@ -656,7 +639,6 @@ if (searchInput) searchInput.addEventListener('input', (event) => { state.query 
 if (sortSelect) sortSelect.addEventListener('change', (event) => { state.sortMode = event.target.value === 'venue' ? 'venue' : 'time'; render(); });
 if (dayPrev) dayPrev.addEventListener('click', () => shiftSelectedDate(-1));
 if (dayNext) dayNext.addEventListener('click', () => shiftSelectedDate(1));
-if (refreshButton) refreshButton.addEventListener('click', () => loadScreenings(true));
 if (calendarPrev) calendarPrev.addEventListener('click', () => {
   const cursor = state.calendarMonth || new Date();
   state.calendarMonth = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1);

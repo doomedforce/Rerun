@@ -27,10 +27,10 @@ the default port is already in use.
 
 ## Official LA feed
 
-The Python server waits for the official-source index to finish whenever the
-LA feed is missing or older than 30 minutes, then returns the current catalog.
-The API refuses to return screening data unless all required sources report
-verified, so the browser never renders a partial required-source list. New
+Rerun runs one scheduled refresh worker at a time. Browse requests are
+read-only: they serve the last atomically written catalog snapshot and never
+start a crawl. The API refuses to return screening data unless all required
+sources report verified, so the browser never renders a partial required-source list. New
 Beverly and Vidiots are also indexed when available, but are marked optional
 so ticketing or program-site outages cannot block the verified feed. The
 current Los Angeles sources are:
@@ -107,14 +107,21 @@ Manual refreshes recheck the schedule/index pages while reusing detail pages
 that are still inside the cache window, so a user-triggered update does not
 re-download every poster and metadata page.
 
-Force a refresh from the command line. The response returns after indexing
-completes:
+Manual refresh is disabled unless `RERUN_REFRESH_TOKEN` is configured. With a
+token, trigger a refresh from an administrative shell; the response returns
+after indexing completes:
 
 ```bash
-curl -X POST http://localhost:4173/api/refresh
+curl -X POST \
+  -H "X-Rerun-Refresh-Token: $RERUN_REFRESH_TOKEN" \
+  http://localhost:4173/api/refresh
 ```
 
-Refresh timing and source health are available from `GET /api/sources`.
+Refresh timing, worker state, and source health are available from
+`GET /api/health` and `GET /api/sources`. `RERUN_WORKER_POLL_SECONDS` controls
+how often the worker checks for a due refresh; `RERUN_REFRESH_TTL_SECONDS`
+defaults to 30 minutes, and `RERUN_REFRESH_RETRY_SECONDS` defaults to 10
+minutes after a failed attempt.
 There is deliberately no partial/offline listing mode in the UI.
 
 The scraper is intentionally conservative: it only follows event pages on the
@@ -131,8 +138,12 @@ availability, and image rights before buying or publishing.
 - `GET /api/screenings/:id` — one screening record
 - `GET /api/venues?city=los-angeles` — official venue directory
 - `GET /api/sources` — source adapters, counts, last checks, and errors
-- `POST /api/refresh` — force a source refresh
+- `POST /api/refresh` — force a source refresh with `X-Rerun-Refresh-Token`
 - `POST /api/notify` with `{ "email": "you@example.com" }` — local alert signup
+
+Alert signups are stored in SQLite at `data/rerun.sqlite3`, with an idempotent
+migration from the prototype's `data/subscribers.json` file. The database and
+all operational JSON files are blocked from static serving.
 
 ## Tests
 
@@ -162,5 +173,5 @@ verified before publishing or using it in a commercial context.
 - Film details modal with synopsis, format, venue, address, source, and notes
 - Shareable screening URLs (`?screening=...`)
 - Calendar `.ics` download from every screening detail view
-- Alert signup connected to the local API
+- SQLite-backed alert signup connected to the local API
 - Installable/offline shell through `manifest.json` and `service-worker.js`

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Dependency-free Rerun server with an official-source refresh endpoint.
+"""Dependency-free Rerun server serving an atomic catalog snapshot.
 
-Run with ``python server.py``. When the Los Angeles feed is stale, a screening
-request waits for the official-source refresh to finish before returning. This
-keeps the browser's first render live and internally consistent.
+Run with ``python server.py``. A background worker refreshes the Los Angeles
+feed on a schedule; browse requests never start a crawl.
 """
 
 import json
+import hmac
 import math
 import mimetypes
 import os
@@ -20,8 +20,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 try:
     import refresh as refresh_service
+    import alerts as alerts_service
+    import refresh_worker
 except ImportError:  # pragma: no cover - only relevant when embedded elsewhere
     refresh_service = None
+    alerts_service = None
+    refresh_worker = None
 
 
 ROOT = Path(__file__).resolve().parent
@@ -31,7 +35,6 @@ DATA_DIR = ROOT / "data"
 # the service environment.
 HOST = "0.0.0.0" if os.environ.get("PORT") else os.environ.get("RERUN_HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT") or os.environ.get("RERUN_PORT") or "4173")
-AUTO_REFRESH = os.environ.get("RERUN_AUTO_REFRESH", "1").lower() not in {"0", "false", "no"}
 BLOCKED_STATIC = {
     "/server.py",
     "/server.js",
@@ -40,10 +43,16 @@ BLOCKED_STATIC = {
     "/package.json",
     "/README.md",
     "/data/subscribers.json",
+    "/data/rerun.sqlite3",
+    "/data/rerun.sqlite3-shm",
+    "/data/rerun.sqlite3-wal",
     "/data/sources.json",
     "/data/last-refresh.json",
+    "/data/snapshot.json",
+    "/data/worker-state.json",
 }
 REFRESH_LOCK = threading.Lock()
+REFRESH_TOKEN = os.environ.get("RERUN_REFRESH_TOKEN", "")
 IMAGE_CACHE = {}
 IMAGE_CACHE_LOCK = threading.Lock()
 IMAGE_CACHE_LIMIT = 24
@@ -82,6 +91,35 @@ def normalized(value):
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+SERVER_STARTED_AT = now_iso()
+
+
+def read_catalog():
+    snapshot = read_json("snapshot.json", {})
+    if isinstance(snapshot, dict) and isinstance(snapshot.get("screenings"), list):
+        return snapshot
+    return {
+        "schemaVersion": 0,
+        "catalogVersion": None,
+        "verified": False,
+        "screenings": read_json("screenings.json", []),
+        "venues": read_json("venues.json", []),
+        "sources": read_json("sources.json", []),
+        "meta": read_json("last-refresh.json", {}),
+    }
+
+
+def refresh_authorized(headers):
+    if not REFRESH_TOKEN:
+        return False
+    provided = headers.get("X-Rerun-Refresh-Token", "")
+    if not provided.lower().startswith("bearer "):
+        provided = headers.get("Authorization", "")
+        if provided.lower().startswith("bearer "):
+            provided = provided[7:]
+    return hmac.compare_digest(str(provided), REFRESH_TOKEN)
 
 
 def image_host_allowed(hostname):
@@ -128,7 +166,8 @@ def iso_sort_value(item):
 
 
 def current_refresh_meta():
-    return read_json("last-refresh.json", {})
+    snapshot = read_catalog()
+    return snapshot.get("meta") or read_json("last-refresh.json", {})
 
 
 def source_is_required(source):
@@ -177,11 +216,11 @@ def maybe_refresh(force=False):
     if refresh_service is None:
         return current_refresh_meta()
     current_meta = current_refresh_meta()
-    if not force and (not AUTO_REFRESH or not refresh_service.refresh_is_stale(current_meta)):
+    if not force and not refresh_service.refresh_is_stale(current_meta):
         return current_meta
     with REFRESH_LOCK:
         current_meta = current_refresh_meta()
-        if not force and (not AUTO_REFRESH or not refresh_service.refresh_is_stale(current_meta)):
+        if not force and not refresh_service.refresh_is_stale(current_meta):
             return current_meta
         try:
             result = refresh_service.refresh_los_angeles(force=force)
@@ -235,7 +274,7 @@ def feed_meta(city, data, venues, sources, refresh_meta):
 
 
 class RerunHandler(BaseHTTPRequestHandler):
-    server_version = "RerunAPI/0.4"
+    server_version = "RerunAPI/0.5"
 
     def log_message(self, format_string, *args):
         print(f"{self.address_string()} - {format_string % args}")
@@ -281,10 +320,13 @@ class RerunHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         if parsed.path == "/api/refresh":
+            if not refresh_authorized(self.headers):
+                self.send_json(403, {"error": "Manual refresh is disabled or requires a valid refresh token."})
+                return
             maybe_refresh(force=True)
             with REFRESH_LOCK:
                 meta = current_refresh_meta()
-                sources = read_json("sources.json", [])
+                sources = read_catalog().get("sources", [])
             complete = feed_is_complete(meta, sources)
             retry_after = None if complete else retry_after_seconds(meta)
             self.send_json(
@@ -314,12 +356,17 @@ class RerunHandler(BaseHTTPRequestHandler):
         if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
             self.send_json(422, {"error": "Enter a valid email address."})
             return
-        subscribers = read_json("subscribers.json", [])
-        if any(item.get("email") == email for item in subscribers):
+        if alerts_service is None:
+            self.send_json(503, {"error": "Alert service is unavailable."})
+            return
+        try:
+            result = alerts_service.add_subscriber(email)
+        except Exception:
+            self.send_json(503, {"error": "Alert service is unavailable."})
+            return
+        if result == "duplicate":
             self.send_json(409, {"error": "That email is already on the list."})
             return
-        subscribers.append({"email": email, "createdAt": now_iso(), "source": "rerun-web"})
-        write_json("subscribers.json", subscribers)
         self.send_json(201, {"ok": True, "message": "You’re on the list — see you at the movies."})
 
     def handle_api(self, parsed):
@@ -336,13 +383,16 @@ class RerunHandler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "service": "rerun-api",
-                    "version": "0.4.0",
+                    "version": "0.5.0",
                     "updatedAt": now_iso(),
-                    "feed": {
+                        "feed": {
                         "status": meta.get("status", "unknown"),
                         "lastRefresh": meta.get("lastRefresh"),
-                        "stale": bool(meta.get("stale", True)),
-                    },
+                            "stale": bool(meta.get("stale", True)),
+                            "complete": feed_is_complete(meta, read_catalog().get("sources", [])),
+                            "catalogVersion": read_catalog().get("catalogVersion"),
+                        },
+                        "worker": read_json("worker-state.json", {"status": "not_started"}),
                 },
             )
             return
@@ -355,22 +405,15 @@ class RerunHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/screenings":
             city = normalized(query.get("city", [""])[0])
-            force = query.get("refresh", [""])[0] in {"1", "true", "yes"}
-            if city in {"", "los-angeles"} and (force or AUTO_REFRESH):
-                # Block until a stale/forced official-source crawl completes.
-                # The browser only receives and renders this response after
-                # the catalog and source metadata have been written together.
-                refresh_meta = maybe_refresh(force=force)
-            else:
-                refresh_meta = current_refresh_meta()
-            # Refresh writes the catalog and its health files as separate
-            # atomic replacements. Hold the same process lock while reading
-            # them so another request cannot observe a mixed refresh.
+            if query.get("refresh", [""])[0] in {"1", "true", "yes"}:
+                self.send_json(403, {"error": "Browse requests are read-only. Use authenticated POST /api/refresh."})
+                return
             with REFRESH_LOCK:
-                refresh_meta = current_refresh_meta()
-                screenings = read_json("screenings.json", [])
-                venues = read_json("venues.json", [])
-                sources = read_json("sources.json", [])
+                catalog = read_catalog()
+                refresh_meta = catalog.get("meta") or current_refresh_meta()
+                screenings = catalog.get("screenings", [])
+                venues = catalog.get("venues", [])
+                sources = catalog.get("sources", [])
             if city in {"", "los-angeles"} and not feed_is_complete(refresh_meta, sources):
                 meta = feed_meta(city, [], venues, sources, refresh_meta)
                 retry_after = retry_after_seconds(refresh_meta)
@@ -421,19 +464,20 @@ class RerunHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/screenings/"):
             screening_id = unquote(path.rsplit("/", 1)[-1])
             with REFRESH_LOCK:
-                item = next((item for item in read_json("screenings.json", []) if item.get("id") == screening_id), None)
+                item = next((item for item in read_catalog().get("screenings", []) if item.get("id") == screening_id), None)
             self.send_json(200 if item else 404, {"data": item} if item else {"error": "Screening not found"})
             return
         if path == "/api/venues":
             city = normalized(query.get("city", [""])[0])
             with REFRESH_LOCK:
-                venues = [venue for venue in read_json("venues.json", []) if not city or normalized(venue.get("city")) == city]
+                venues = [venue for venue in read_catalog().get("venues", []) if not city or normalized(venue.get("city")) == city]
             self.send_json(200, {"data": venues, "meta": {"count": len(venues), "city": city or None, "updatedAt": now_iso()}})
             return
         if path == "/api/sources":
             with REFRESH_LOCK:
-                sources = read_json("sources.json", [])
-                meta = current_refresh_meta()
+                catalog = read_catalog()
+                sources = catalog.get("sources", [])
+                meta = catalog.get("meta") or current_refresh_meta()
             self.send_json(200, {"data": sources, "meta": meta})
             return
         self.send_json(404, {"error": "API route not found"})
@@ -468,11 +512,17 @@ class RerunHandler(BaseHTTPRequestHandler):
 def main():
     server = ThreadingHTTPServer((HOST, PORT), RerunHandler)
     print(f"Rerun is live at http://localhost:{PORT} (bound to {HOST})")
+    stop_event = threading.Event()
+    worker_thread = None
+    if refresh_worker is not None and os.environ.get("RERUN_DISABLE_WORKER", "0").lower() not in {"1", "true", "yes"}:
+        worker_thread = threading.Thread(target=refresh_worker.run_worker, args=(stop_event,), name="rerun-refresh-worker", daemon=True)
+        worker_thread.start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nRerun stopped.")
     finally:
+        stop_event.set()
         server.server_close()
 
 

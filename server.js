@@ -1,6 +1,7 @@
 const http = require('node:http');
 const fs = require('node:fs/promises');
 const { spawn } = require('node:child_process');
+const crypto = require('node:crypto');
 const path = require('node:path');
 const { URL } = require('node:url');
 
@@ -24,11 +25,10 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon'
 };
 
-const BLOCKED_STATIC = new Set(['/server.js', '/server.py', '/scraper.py', '/refresh.py', '/package.json', '/README.md', '/data/subscribers.json', '/data/sources.json', '/data/last-refresh.json']);
-const AUTO_REFRESH = !['0', 'false', 'no'].includes(String(process.env.RERUN_AUTO_REFRESH || '1').toLowerCase());
-const REFRESH_TTL_MS = Number(process.env.RERUN_REFRESH_TTL_SECONDS || 1800) * 1000;
+const BLOCKED_STATIC = new Set(['/server.js', '/server.py', '/scraper.py', '/refresh.py', '/refresh_worker.py', '/alerts.py', '/package.json', '/README.md', '/data/subscribers.json', '/data/rerun.sqlite3', '/data/rerun.sqlite3-shm', '/data/rerun.sqlite3-wal', '/data/sources.json', '/data/last-refresh.json', '/data/snapshot.json', '/data/worker-state.json']);
 const RETRY_BACKOFF_MS = Number(process.env.RERUN_REFRESH_RETRY_SECONDS || 600) * 1000;
-const FEED_POLICY_VERSION = 12;
+const FEED_POLICY_VERSION = 13;
+const REFRESH_TOKEN = process.env.RERUN_REFRESH_TOKEN || '';
 const OPTIONAL_SOURCE_IDS = new Set(['new-beverly', 'vidiots']);
 const IMAGE_CACHE = new Map();
 const IMAGE_CACHE_LIMIT = 64;
@@ -40,6 +40,7 @@ const IMAGE_ALLOWED_HOSTS = new Set([
   'vidiotsfoundation.org', 'www.vidiotsfoundation.org', 'la.teentix.org'
 ]);
 let refreshInFlight = null;
+let refreshWorker = null;
 
 const jsonHeaders = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
 
@@ -55,6 +56,20 @@ async function readJson(fileName, fallback = []) {
 async function writeJson(fileName, value) {
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(path.join(DATA_DIR, fileName), `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+async function readCatalog() {
+  const snapshot = await readJson('snapshot.json', {});
+  if (snapshot && Array.isArray(snapshot.screenings)) return snapshot;
+  return {
+    schemaVersion: 0,
+    catalogVersion: null,
+    verified: false,
+    screenings: await readJson('screenings.json'),
+    venues: await readJson('venues.json'),
+    sources: await readJson('sources.json'),
+    meta: await readJson('last-refresh.json', {})
+  };
 }
 
 function sendJson(response, status, payload) {
@@ -116,15 +131,6 @@ function normalize(value) {
   return String(value || '').trim().toLowerCase();
 }
 
-function refreshIsStale(meta = {}, force = false) {
-  if (force || !meta || Object.keys(meta).length === 0) return true;
-  if (Number(meta.feedPolicyVersion) !== FEED_POLICY_VERSION) return true;
-  if (meta.nextRetryAt && Date.parse(meta.nextRetryAt) > Date.now()) return false;
-  if (meta.mode === 'seed' || ['seed', 'unknown'].includes(meta.status)) return true;
-  const checked = Date.parse(meta.lastRefresh || meta.checkedAt || '');
-  return !Number.isFinite(checked) || Date.now() - checked >= REFRESH_TTL_MS;
-}
-
 function sourceIsRequired(source = {}) {
   return source.required !== false && !OPTIONAL_SOURCE_IDS.has(source.id);
 }
@@ -137,6 +143,15 @@ function feedIsComplete(refreshMeta = {}, sources = []) {
     && refreshMeta.status === 'ok'
     && verifiedRequired >= requiredSources.length
     && requiredSources.every((source) => source.status === 'verified');
+}
+
+function refreshAuthorized(request) {
+  if (!REFRESH_TOKEN) return false;
+  const supplied = request.headers['x-rerun-refresh-token']
+    || String(request.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const expected = Buffer.from(REFRESH_TOKEN);
+  const actual = Buffer.from(String(supplied));
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
 function runPythonRefresh(force = false) {
@@ -169,11 +184,32 @@ function runPythonRefresh(force = false) {
   return refreshInFlight;
 }
 
-async function maybeRefresh(force = false) {
-  const prior = await readJson('last-refresh.json', {});
-  if (!force && (!AUTO_REFRESH || !refreshIsStale(prior))) return prior;
-  await runPythonRefresh(force);
-  return readJson('last-refresh.json', {});
+function startRefreshWorker() {
+  if (['1', 'true', 'yes'].includes(String(process.env.RERUN_DISABLE_WORKER || '').toLowerCase())) return;
+  const executable = process.env.RERUN_PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+  refreshWorker = spawn(executable, [path.join(ROOT, 'refresh_worker.py')], {
+    cwd: ROOT,
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  refreshWorker.stdout.on('data', (chunk) => process.stdout.write(`[refresh-worker] ${chunk}`));
+  refreshWorker.stderr.on('data', (chunk) => process.stderr.write(`[refresh-worker] ${chunk}`));
+  refreshWorker.on('error', (error) => console.error('[refresh-worker] failed to start', error));
+  refreshWorker.on('exit', (code, signal) => console.error(`[refresh-worker] exited code=${code} signal=${signal || 'none'}`));
+}
+
+function runAlertCommand(email) {
+  const executable = process.env.RERUN_PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+  return new Promise((resolve) => {
+    const child = spawn(executable, [path.join(ROOT, 'alerts.py'), 'add', email], { cwd: ROOT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    child.stdout.on('data', (chunk) => { output += chunk.toString(); });
+    child.on('error', () => resolve({ status: 'error' }));
+    child.on('close', (code) => {
+      try { resolve(code === 0 ? JSON.parse(output || '{}') : { status: 'error' }); }
+      catch (error) { resolve({ status: 'error' }); }
+    });
+  });
 }
 
 function feedMeta(city, data, venues, sources, refreshMeta) {
@@ -233,17 +269,21 @@ async function handleApi(request, response, requestUrl) {
   const pathname = requestUrl.pathname;
 
   if (request.method === 'GET' && pathname === '/api/health') {
-    const refreshMeta = await readJson('last-refresh.json', {});
+    const catalog = await readCatalog();
+    const refreshMeta = catalog.meta || {};
     return sendJson(response, 200, {
       ok: true,
       service: 'rerun-api',
-      version: '0.3.0',
+      version: '0.5.0',
       updatedAt: new Date().toISOString(),
       feed: {
         status: refreshMeta.status || 'unknown',
         lastRefresh: refreshMeta.lastRefresh || null,
-        stale: Boolean(refreshMeta.stale ?? true)
-      }
+        stale: Boolean(refreshMeta.stale ?? true),
+        complete: feedIsComplete(refreshMeta, catalog.sources || []),
+        catalogVersion: catalog.catalogVersion || null
+      },
+      worker: await readJson('worker-state.json', { status: 'not_started' })
     });
   }
 
@@ -253,10 +293,14 @@ async function handleApi(request, response, requestUrl) {
 
   if (request.method === 'GET' && pathname === '/api/screenings') {
     const city = normalize(requestUrl.searchParams.get('city'));
-    const force = ['1', 'true', 'yes'].includes(String(requestUrl.searchParams.get('refresh') || '').toLowerCase());
-    const refreshMeta = city === '' || city === 'los-angeles' ? await maybeRefresh(force) : await readJson('last-refresh.json', {});
-    const [screenings, venues] = await Promise.all([readJson('screenings.json'), readJson('venues.json')]);
-    const sources = await readJson('sources.json');
+    if (['1', 'true', 'yes'].includes(String(requestUrl.searchParams.get('refresh') || '').toLowerCase())) {
+      return sendJson(response, 403, { error: 'Browse requests are read-only. Use authenticated POST /api/refresh.' });
+    }
+    const catalog = await readCatalog();
+    const refreshMeta = catalog.meta || {};
+    const screenings = catalog.screenings || [];
+    const venues = catalog.venues || [];
+    const sources = catalog.sources || [];
     if ((city === '' || city === 'los-angeles') && !feedIsComplete(refreshMeta, sources)) {
       const retryAfterSeconds = Math.max(5, Math.min(900, Number(refreshMeta.retryAfterSeconds || 30)));
       return sendJson(response, 503, {
@@ -287,27 +331,30 @@ async function handleApi(request, response, requestUrl) {
 
   const screeningMatch = pathname.match(/^\/api\/screenings\/([^/]+)$/);
   if (request.method === 'GET' && screeningMatch) {
-    const screenings = await readJson('screenings.json');
+    const screenings = (await readCatalog()).screenings || [];
     const item = screenings.find((screening) => screening.id === decodeURIComponent(screeningMatch[1]));
     return item ? sendJson(response, 200, { data: item }) : sendJson(response, 404, { error: 'Screening not found' });
   }
 
   if (request.method === 'GET' && pathname === '/api/venues') {
-    const venues = await readJson('venues.json');
+    const venues = (await readCatalog()).venues || [];
     const city = normalize(requestUrl.searchParams.get('city'));
     const data = venues.filter((venue) => !city || normalize(venue.city) === city);
     return sendJson(response, 200, { data, meta: { count: data.length, updatedAt: new Date().toISOString() } });
   }
 
   if (request.method === 'GET' && pathname === '/api/sources') {
-    const [sources, refreshMeta] = await Promise.all([readJson('sources.json'), readJson('last-refresh.json', {})]);
+    const catalog = await readCatalog();
+    const sources = catalog.sources || [];
+    const refreshMeta = catalog.meta || {};
     return sendJson(response, 200, { data: sources, meta: refreshMeta });
   }
 
   if (request.method === 'POST' && pathname === '/api/refresh') {
-    await maybeRefresh(true);
+    if (!refreshAuthorized(request)) return sendJson(response, 403, { error: 'Manual refresh is disabled or requires a valid refresh token.' });
+    await runPythonRefresh(true);
     const meta = await readJson('last-refresh.json', {});
-    const sources = await readJson('sources.json');
+    const sources = (await readCatalog()).sources || [];
     const ok = feedIsComplete(meta, sources);
     return sendJson(response, ok ? 200 : 503, { ok, completed: ok, meta, sources });
   }
@@ -323,12 +370,11 @@ async function handleApi(request, response, requestUrl) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return sendJson(response, 422, { error: 'Enter a valid email address.' });
     }
-    const subscribers = await readJson('subscribers.json');
-    if (subscribers.some((subscriber) => subscriber.email === email)) {
+    const result = await runAlertCommand(email);
+    if (result.status === 'error') return sendJson(response, 503, { error: 'Alert service is unavailable.' });
+    if (result.status === 'duplicate') {
       return sendJson(response, 409, { error: 'That email is already on the list.' });
     }
-    subscribers.push({ email, createdAt: new Date().toISOString(), source: 'rerun-web' });
-    await writeJson('subscribers.json', subscribers);
     return sendJson(response, 201, { ok: true, message: 'You’re on the list — see you at the movies.' });
   }
 
@@ -384,7 +430,9 @@ const server = http.createServer(async (request, response) => {
 if (require.main === module) {
   server.listen(PORT, HOST, () => {
     console.log(`Rerun is live at http://localhost:${PORT} (bound to ${HOST})`);
+    startRefreshWorker();
   });
+  server.on('close', () => refreshWorker?.kill('SIGTERM'));
 }
 
 module.exports = { server, handleApi, serveStatic };
