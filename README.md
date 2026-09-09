@@ -167,9 +167,9 @@ verified before publishing or using it in a commercial context.
 - Browse requests are filtered to the selected date server-side, keeping the live payload small
 - Source links on every card and in the details modal
 - Search across title, director, genre, format, and venue
-- Date filters for all dates, tonight, and this weekend
+- Quick date filters for tonight, tomorrow, this weekend, and all upcoming screenings
 - Soonest showtime or theatre sorting across the full date range
-- Save and unsave films with browser `localStorage`
+- Save and unsave screenings with browser `localStorage`; saved cards expose ticket, calendar, share, and remove actions
 - Film details modal with synopsis, format, venue, address, source, and notes
 - Shareable screening URLs (`?screening=...`)
 - Calendar `.ics` download from every screening detail view

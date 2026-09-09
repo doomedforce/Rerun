@@ -285,16 +285,45 @@ AC_DAY_DATE_RE = re.compile(
 AC_EVENT_URL_DATE_RE = re.compile(r"-(?P<month>\d{1,2})-(?P<day>\d{1,2})-(?P<year>20\d{2}|\d{2})/?$", re.I)
 AC_NON_SCREENING_TITLES = frozenset(
     {
+        "about",
         "about the series",
         "about the festival",
         "about the film",
         "about the films",
+        "calendar",
+        "contact",
+        "directions",
+        "donate",
+        "film programs",
+        "get tickets",
+        "monthly programming",
         "membership",
         "become a member",
         "locations",
+        "now showing",
+        "program",
+        "programs",
         "related events",
         "related screenings",
         "subscribe for ac updates",
+        "tickets",
+    }
+)
+GENERIC_SCREENING_TITLES = frozenset(
+    {
+        "buy tickets",
+        "coming soon",
+        "details",
+        "double feature",
+        "more info",
+        "movie listings",
+        "movies",
+        "read more",
+        "show times",
+        "showtimes",
+        "special event",
+        "upcoming movies",
+        "upcoming screenings",
     }
 )
 NEW_BEV_DATE_RE = re.compile(
@@ -310,6 +339,13 @@ def normalize_space(value: object) -> str:
 def normalize_key(value: object) -> str:
     text = unicodedata.normalize("NFKC", normalize_space(value)).casefold()
     return text.replace("½", "1/2").replace("’", "'")
+
+
+def screening_title_key(value: object) -> str:
+    """Normalize title punctuation so duplicate source cards share one key."""
+
+    text = unicodedata.normalize("NFKD", normalize_space(value)).encode("ascii", "ignore").decode("ascii").casefold()
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
 def slugify(value: object) -> str:
@@ -713,6 +749,15 @@ def parse_ac_datetime(text: str) -> datetime | None:
         return None
 
 
+def parse_ac_datetimes(text: str) -> list[datetime]:
+    values: list[datetime] = []
+    for match in AC_DATE_RE.finditer(text):
+        parsed = parse_ac_datetime(match.group(0))
+        if parsed:
+            values.append(parsed)
+    return values
+
+
 def parse_ac_series_datetime(date_text: str, time_text: str) -> datetime | None:
     date_match = AC_DAY_DATE_RE.search(date_text)
     time_match = TIME_RE.search(time_text)
@@ -736,7 +781,44 @@ def parse_ac_series_datetime(date_text: str, time_text: str) -> datetime | None:
 
 def is_ac_screening_title(title: str) -> bool:
     key = normalize_key(title).rstrip(":")
-    return bool(key) and key not in AC_NON_SCREENING_TITLES and not key.startswith("about the ")
+    return bool(key) and key not in AC_NON_SCREENING_TITLES and key not in GENERIC_SCREENING_TITLES and not key.startswith(("about the ", "programmed by "))
+
+
+def is_probable_screening_title(title: object) -> bool:
+    """Reject generic navigation/card labels before they become events."""
+
+    key = screening_title_key(title)
+    return bool(key) and key not in {screening_title_key(value) for value in (*AC_NON_SCREENING_TITLES, *GENERIC_SCREENING_TITLES)}
+
+
+def screening_identity(event: dict) -> tuple[str, str, str, str]:
+    return (
+        normalize_key(event.get("city", "")),
+        screening_title_key(event.get("venue", "")),
+        screening_title_key(event.get("title", "")),
+        normalize_space(event.get("startAt", "")),
+    )
+
+
+def event_quality(event: dict) -> tuple[int, int]:
+    status = normalize_key(event.get("sourceStatus", ""))
+    verified = 2 if status.startswith("verified") else 1 if status else 0
+    metadata = sum(bool(normalize_space(event.get(field, ""))) for field in ("director", "year", "format", "synopsis", "notes", "image"))
+    return verified, metadata
+
+
+def deduplicate_events(events: Iterable[dict]) -> list[dict]:
+    """Keep one best record for each venue/title/start tuple."""
+
+    unique: dict[tuple[str, str, str, str], dict] = {}
+    for event in events:
+        if not is_probable_screening_title(event.get("title", "")):
+            continue
+        key = screening_identity(event)
+        current = unique.get(key)
+        if current is None or event_quality(event) > event_quality(current):
+            unique[key] = event
+    return sorted(unique.values(), key=lambda item: item.get("startAt", ""))
 
 
 def ac_event_url_date(page_url: str) -> tuple[int, int, int] | None:
@@ -921,9 +1003,20 @@ def make_event(
 
 
 def parse_american_cinematheque_event(html: str, page_url: str, now: datetime | None = None) -> dict | None:
+    if not urlsplit(page_url).path.rstrip("/").startswith("/now-showing/"):
+        return None
     parser = parse_html(html)
     lines = parser.lines
     start_at = parse_ac_datetime(parser.text)
+    url_date = ac_event_url_date(page_url)
+    if url_date:
+        matching_dates = [
+            candidate
+            for candidate in parse_ac_datetimes(parser.text)
+            if (candidate.year, candidate.month, candidate.day) == url_date
+        ]
+        if matching_dates:
+            start_at = matching_dates[0]
     title = next((heading["text"] for heading in parser.headings if heading["tag"] == "h1" and heading["text"]), "")
     if not title:
         title = normalize_space(parser.meta.get("og:title", "")).split("|")[0].strip()
@@ -1109,10 +1202,12 @@ def parse_new_beverly_schedule(html: str, page_url: str = NEW_BEV_SCHEDULE_URL, 
             elif title_parts:
                 title_parts.extend([title_parts[-1]] * (len(times) - len(title_parts)))
             else:
-                title_parts = ["Program listing"] * len(times)
+                # A date/time row without a film title is usually a program
+                # header or navigation fragment, not a screening.
+                continue
         for index, time_match in enumerate(times):
             title = title_parts[index] if index < len(title_parts) else title_parts[-1]
-            if not title:
+            if not title or not is_probable_screening_title(title):
                 continue
             hour, minute = parse_time(time_match.group("hour"), time_match.group("minute"), time_match.group("meridiem"))
             try:
@@ -1134,7 +1229,11 @@ def parse_new_beverly_schedule(html: str, page_url: str = NEW_BEV_SCHEDULE_URL, 
                     "notes": "Midnight show" if hour >= 23 else "",
                 }
             )
-    return results
+    unique_results: dict[tuple[str, str], dict] = {}
+    for result in results:
+        key = (screening_title_key(result.get("title", "")), result["startAt"].isoformat())
+        unique_results.setdefault(key, result)
+    return list(unique_results.values())
 
 
 def _section_for_title(lines: list[str], title: str, all_titles: list[str]) -> list[str]:
@@ -1623,6 +1722,7 @@ def parse_vista_session_feed(html: str, now: datetime | None = None) -> list[dic
         if heading.get("tag") in {"h2", "h3"}
         and heading.get("text")
         and normalize_key(heading["text"]) not in ignored_titles
+        and is_probable_screening_title(heading["text"])
         and parse_vista_session_date(heading["text"], current) is None
     }
     current_title = ""
@@ -2276,10 +2376,7 @@ def _scrape_american_cinematheque(current: datetime, fetcher: CachedFetcher, for
             warnings.append(f"{page_url}: detail enrichment unavailable: {message}")
         else:
             errors.append(f"{page_url}: {message}")
-    events = list({
-        (normalize_key(event.get("title", "")), event.get("venue", ""), event.get("startAt", "")): event
-        for event in events
-    }.values())
+    events = deduplicate_events(events)
     source = {
         "id": "american-cinematheque",
         "name": "American Cinematheque",
@@ -2605,14 +2702,18 @@ def _scrape_vidiots(current: datetime, fetcher: CachedFetcher, force: bool) -> d
     if not entries:
         warnings.append("Official Vidiots: no upcoming showtimes found")
 
-    unique_entries: dict[tuple[str, str, str], dict] = {}
+    unique_entries: dict[tuple[str, str], dict] = {}
     for entry in entries:
         key = (
-            entry.get("pageUrl", ""),
-            normalize_key(entry.get("title", "")),
+            screening_title_key(entry.get("title", "")),
             entry.get("startAt").isoformat() if entry.get("startAt") else "",
         )
-        unique_entries[key] = entry
+        current_entry = unique_entries.get(key)
+        if current_entry is None or (
+            entry.get("pageUrl") in detail_pages_with_schedule
+            and current_entry.get("pageUrl") not in detail_pages_with_schedule
+        ):
+            unique_entries[key] = entry
     entries = list(unique_entries.values())
 
     # The official site currently blocks some server environments. TeenTix's
@@ -2739,16 +2840,7 @@ def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | Non
         sources.append(source)
         errors.extend(result.get("errors", []))
 
-    deduped: dict[tuple[str, str, str, str], dict] = {}
-    for event in all_events:
-        key = (
-            event.get("sourceName", ""),
-            event.get("venue", ""),
-            normalize_key(event.get("title", "")),
-            event.get("startAt", ""),
-        )
-        deduped[key] = event
-    normalized_events = sorted(deduped.values(), key=lambda item: item.get("startAt", ""))
+    normalized_events = deduplicate_events(all_events)
     return {
         "screenings": normalized_events,
         "sources": sources,

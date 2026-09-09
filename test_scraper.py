@@ -123,6 +123,12 @@ VISTA_HTML = """
 </html>
 """
 
+NEW_BEV_UNTITLED_TIME_HTML = """
+<html><h1>Monthly Programming</h1><h2>September 2026</h2>
+<a href="/program/september-14-program/">Mon, September 14 7:30 pm More Info / Buy Tickets</a>
+</html>
+"""
+
 VISTA_LIVE_DETAIL_HTML = """
 <html><h3>Showtimes</h3>
 <p>September, 8th 2026</p>
@@ -286,6 +292,28 @@ class ScraperTests(unittest.TestCase):
         self.assertEqual(event["venue"], "Aero Theatre")
         self.assertEqual(event["image"], "https://assets.example/crash.jpg")
 
+    def test_american_cinematheque_rejects_program_pages_as_screenings(self):
+        event = scraper.parse_american_cinematheque_event(
+            '<html><h1>Programmed by Mel Brooks: 100 Years at the Movies</h1>'
+            '<p>WED SEP 9, 2026 7:30 PM</p><p>Aero Theatre | Program</p></html>',
+            "https://www.americancinematheque.com/series/programmed-by-mel-brooks-100-years-at-the-movies/",
+            NOW,
+        )
+        self.assertIsNone(event)
+
+    def test_american_cinematheque_uses_event_url_date_not_related_event_date(self):
+        html = AC_HTML.replace(
+            "FRI SEP 11, 2026 7:30 PM",
+            "SAT SEP 12, 2026 9:00 PM FRI SEP 11, 2026 7:30 PM",
+        )
+        event = scraper.parse_american_cinematheque_event(
+            html,
+            "https://www.americancinematheque.com/now-showing/crash-09-11-2026/",
+            NOW,
+        )
+        self.assertIsNotNone(event)
+        self.assertEqual(event["startAt"], "2026-09-11T19:30:00-07:00")
+
     def test_american_cinematheque_event_uses_primary_metadata_venue(self):
         cases = (
             (AC_EGYPTIAN_HTML, "https://www.americancinematheque.com/now-showing/the-visit-trap-09-28-2026/", "Egyptian Theatre"),
@@ -391,6 +419,10 @@ class ScraperTests(unittest.TestCase):
         ])
         self.assertEqual([entry["startAt"].strftime("%H:%M") for entry in entries], ["19:30", "22:00", "14:00"])
 
+    def test_new_beverly_schedule_drops_untitled_program_rows(self):
+        entries = scraper.parse_new_beverly_schedule(NEW_BEV_UNTITLED_TIME_HTML, scraper.NEW_BEV_SCHEDULE_URL, NOW)
+        self.assertEqual(entries, [])
+
     def test_new_beverly_detail_keeps_each_film_metadata(self):
         details = scraper.parse_new_beverly_detail(DETAIL_HTML, "https://thenewbev.com/program/september-8-rocky-bound-for-glory/")
         self.assertEqual(details["films"][0]["director"], "John G. Avildsen")
@@ -456,6 +488,23 @@ class ScraperTests(unittest.TestCase):
         self.assertEqual(entries[0]["notes"], "Bookings closed")
         self.assertEqual(entries[2]["format"], "16mm / DVD")
         self.assertEqual(entries[3]["notes"], "Sold out")
+
+    def test_vista_veezi_feed_ignores_generic_non_screening_headings(self):
+        html = """
+        <html><h3>Special Event</h3><h3>Show Times</h3>
+        <h3>Tuesday 8, September</h3>
+        <a href="https://ticketing.uswest.veezi.com/ticket/1">7:30 PM</a></html>
+        """
+        self.assertEqual(scraper.parse_vista_session_feed(html, NOW), [])
+
+    def test_global_deduper_ignores_source_name_and_title_punctuation(self):
+        events = [
+            {"city": "los-angeles", "venue": "Vista Theater", "title": "The Film", "startAt": "2026-09-11T19:30:00-07:00", "sourceName": "Vista Theater Hollywood", "sourceStatus": "verified"},
+            {"city": "los-angeles", "venue": "Vista Theater", "title": "THE-FILM", "startAt": "2026-09-11T19:30:00-07:00", "sourceName": "Vista ticketing", "sourceStatus": "verified-series-calendar", "synopsis": "Richer metadata"},
+        ]
+        deduped = scraper.deduplicate_events(events)
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(deduped[0]["sourceName"], "Vista ticketing")
 
     def test_vista_adapter_uses_veezi_as_source_of_truth(self):
         pages = {scraper.VISTA_SESSIONS_URL: VEEZI_SESSIONS_HTML}

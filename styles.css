@@ -260,10 +260,11 @@ button { -webkit-tap-highlight-color: transparent; }
 .day-label strong { font: 500 1.15rem / 1 var(--serif); letter-spacing: -.03em; white-space: nowrap; }
 .day-arrow, .calendar-button { border: 1px solid var(--line-strong); background: transparent; color: var(--paper); cursor: pointer; min-height: 38px; }
 .day-arrow { width: 38px; font-size: 1.05rem; }
+.day-arrow:disabled { opacity: .35; cursor: not-allowed; }
 .day-arrow:hover, .calendar-button:hover { border-color: var(--gold); color: var(--gold); }
 .calendar-button { padding: .65rem .75rem; font: 500 .54rem var(--mono); text-transform: uppercase; white-space: nowrap; }
 .calendar-button span { color: var(--gold); margin-left: .35rem; }
-.date-filters { display: flex; gap: .5rem; }
+.date-filters { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 1.5rem; }
 .date-filter { border: 1px solid var(--line); border-radius: 2rem; background: transparent; padding: .55rem .8rem; cursor: pointer; font: 400 .57rem var(--mono); white-space: nowrap; color: var(--paper-dim); }
 .date-filter:hover, .date-filter.active { background: var(--paper); color: var(--night); border-color: var(--paper); }
 .listing-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; gap: 1rem; }
@@ -334,6 +335,10 @@ button { -webkit-tap-highlight-color: transparent; }
 .card-body { padding: 1rem 1.1rem 1.2rem; }
 .card-heading { display: flex; justify-content: space-between; gap: .8rem; }
 .film-title { font: 500 1.2rem var(--serif); letter-spacing: -.03em; margin: 0; }
+.title-action { border: 0; background: none; color: inherit; cursor: pointer; padding: 0; text-align: left; }
+.title-action:hover, .title-action:focus-visible { color: var(--gold); }
+.film-title.title-action { display: block; width: 100%; }
+.poster-title.title-action { display: block; width: 100%; }
 .film-meta { font: 400 .67rem var(--mono); color: var(--smoke); margin: .3rem 0 0; }
 .distance { font: 400 .55rem var(--mono); white-space: nowrap; color: var(--gold); }
 .card-showing { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 1rem 0; padding: .8rem 0; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .25rem; }
@@ -345,10 +350,18 @@ button { -webkit-tap-highlight-color: transparent; }
 .showtime-option:hover { color: var(--gold); border-color: var(--gold); }
 .source-label { display: block; color: var(--smoke); font: 400 .5rem var(--mono); text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 1rem; }
 .source-label:hover { color: var(--gold); text-decoration: underline; text-underline-offset: 3px; }
-.card-actions { display: flex; justify-content: space-between; align-items: center; gap: .8rem; }
+.card-actions { display: flex; justify-content: space-between; align-items: center; gap: .65rem; flex-wrap: wrap; }
 .details-button, .ticket-link { font: 500 .58rem var(--mono); text-transform: uppercase; border: 0; background: none; padding: 0; cursor: pointer; }
 .details-button span, .ticket-link span { color: var(--gold); font-size: .8rem; }
 .ticket-link { color: var(--red); }
+.save-screening-button { display: inline-flex; align-items: center; gap: .35rem; border: 1px solid var(--line-strong); background: transparent; color: var(--paper-dim); padding: .5rem .65rem; cursor: pointer; font: 500 .56rem var(--mono); text-transform: uppercase; transition: background .2s, color .2s, border-color .2s; }
+.save-screening-button:hover, .save-screening-button:focus-visible, .save-screening-button.saved { background: var(--gold); color: var(--night); border-color: var(--gold); }
+.save-text-icon { color: var(--gold); font-size: .95rem; line-height: .65; }
+.save-screening-button:hover .save-text-icon, .save-screening-button:focus-visible .save-text-icon, .save-screening-button.saved .save-text-icon { color: var(--night); }
+.saved-actions { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .7rem; padding-top: .7rem; border-top: 1px solid var(--line); }
+.card-quick-button { border: 1px solid var(--line); background: transparent; color: var(--paper-dim); padding: .45rem .55rem; cursor: pointer; font: 500 .52rem var(--mono); text-transform: uppercase; }
+.card-quick-button:hover, .card-quick-button:focus-visible { border-color: var(--gold); color: var(--gold); }
+.remove-saved-button { color: var(--red); }
 .empty-state { text-align: center; padding: 6rem 1rem; }
 .empty-state > div { font-size: 3rem; color: var(--red); }
 .empty-state h3 { font: 500 2rem var(--serif); margin: .5rem 0; }

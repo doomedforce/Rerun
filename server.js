@@ -27,7 +27,7 @@ const MIME_TYPES = {
 
 const BLOCKED_STATIC = new Set(['/server.js', '/server.py', '/scraper.py', '/refresh.py', '/refresh_worker.py', '/alerts.py', '/package.json', '/README.md', '/data/subscribers.json', '/data/rerun.sqlite3', '/data/rerun.sqlite3-shm', '/data/rerun.sqlite3-wal', '/data/sources.json', '/data/last-refresh.json', '/data/snapshot.json', '/data/worker-state.json']);
 const RETRY_BACKOFF_MS = Number(process.env.RERUN_REFRESH_RETRY_SECONDS || 600) * 1000;
-const FEED_POLICY_VERSION = 13;
+const FEED_POLICY_VERSION = 14;
 const REFRESH_TOKEN = process.env.RERUN_REFRESH_TOKEN || '';
 const OPTIONAL_SOURCE_IDS = new Set(['new-beverly', 'vidiots']);
 const IMAGE_CACHE = new Map();
@@ -428,9 +428,9 @@ const server = http.createServer(async (request, response) => {
 });
 
 if (require.main === module) {
+  startRefreshWorker();
   server.listen(PORT, HOST, () => {
     console.log(`Rerun is live at http://localhost:${PORT} (bound to ${HOST})`);
-    startRefreshWorker();
   });
   server.on('close', () => refreshWorker?.kill('SIGTERM'));
 }

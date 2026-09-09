@@ -17,6 +17,7 @@ const state = {
   selectedDate: todayDateKey(),
   query: '',
   sortMode: 'time',
+  dateFilter: 'today',
   view: isCalendarPage ? 'calendar' : 'browse',
   calendarMonth: null,
   calendarSelectedDate: '',
@@ -91,7 +92,7 @@ function screeningsApiPath() {
   // Browse only needs the selected day; calendar/saved views need the full
   // upcoming catalog. Keeping this filter server-side makes the completed
   // live response smaller and faster to render.
-  if (state.view === 'browse') params.set('dateKey', state.selectedDate);
+  if (state.view === 'browse' && !['weekend', 'upcoming'].includes(state.dateFilter)) params.set('dateKey', state.selectedDate);
   return apiUrl(`/api/screenings?${params.toString()}`);
 }
 
@@ -152,6 +153,16 @@ function todayDateKey() {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+function dateKeyFromDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function offsetDateKey(offset) {
+  const date = dateFromKey(todayDateKey());
+  date.setDate(date.getDate() + offset);
+  return dateKeyFromDate(date);
+}
+
 function dateFromKey(dateKey) {
   const [year, month, day] = String(dateKey || '').split('-').map(Number);
   return year && month && day ? new Date(year, month - 1, day, 12) : new Date();
@@ -167,13 +178,54 @@ function relativeDayLabel(dateKey) {
   return 'Screening day';
 }
 
+function weekendDateKeys() {
+  const today = dateFromKey(todayDateKey());
+  const day = today.getDay();
+  const start = new Date(today);
+  if (day === 0) {
+    start.setDate(start.getDate() - 1);
+    return [dateKeyFromDate(start), todayDateKey()];
+  }
+  start.setDate(start.getDate() + (6 - day));
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return [dateKeyFromDate(start), dateKeyFromDate(end)];
+}
+
+function isUpcoming(item) {
+  const timestamp = item.startAt ? new Date(item.startAt).getTime() : NaN;
+  return Number.isNaN(timestamp) || timestamp >= Date.now();
+}
+
+function matchesDateFilter(item) {
+  const key = screeningDateKey(item);
+  if (!key) return false;
+  if (state.dateFilter === 'upcoming') return isUpcoming(item);
+  if (state.dateFilter === 'weekend') {
+    const [start, end] = weekendDateKeys();
+    return key >= start && key <= end && isUpcoming(item);
+  }
+  return key === state.selectedDate && isUpcoming(item);
+}
+
+function updateDateFilters() {
+  document.querySelectorAll('.date-filter').forEach((button) => {
+    const active = button.dataset.dateFilter === state.dateFilter;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+}
+
 function updateDayNavigator() {
   const key = state.selectedDate || todayDateKey();
   const date = dateFromKey(key);
-  const relative = relativeDayLabel(key);
+  const relative = state.dateFilter === 'weekend' ? 'This weekend' : state.dateFilter === 'upcoming' ? 'All upcoming' : relativeDayLabel(key);
   if (dayKicker) dayKicker.textContent = relative;
-  if (dayLabel) dayLabel.textContent = date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
-  if (browseDayWord) browseDayWord.textContent = relative === 'Today' ? 'today.' : `${date.toLocaleDateString(undefined, { weekday: 'long' }).toLowerCase()}.`;
+  if (dayLabel) dayLabel.textContent = state.dateFilter === 'weekend' ? 'Saturday + Sunday' : state.dateFilter === 'upcoming' ? 'Every upcoming show' : date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+  if (browseDayWord) browseDayWord.textContent = state.dateFilter === 'weekend' ? 'this weekend.' : state.dateFilter === 'upcoming' ? 'upcoming.' : state.dateFilter === 'today' ? 'tonight.' : state.dateFilter === 'tomorrow' ? 'tomorrow.' : `${date.toLocaleDateString(undefined, { weekday: 'long' }).toLowerCase()}.`;
+  if (dayPrev) dayPrev.disabled = state.dateFilter === 'upcoming';
+  if (dayNext) dayNext.disabled = state.dateFilter === 'upcoming';
+  updateDateFilters();
 }
 
 function shiftSelectedDate(offset) {
@@ -182,6 +234,7 @@ function shiftSelectedDate(offset) {
   state.selectedDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   state.calendarSelectedDate = state.selectedDate;
   state.calendarMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+  state.dateFilter = state.selectedDate === todayDateKey() ? 'today' : state.selectedDate === offsetDateKey(1) ? 'tomorrow' : 'day';
   state.view = 'browse';
   render();
   loadScreenings();
@@ -318,7 +371,7 @@ function matchingScreenings() {
   const query = state.query.trim().toLowerCase();
   return screenings
     .filter((item) => item.city === state.city)
-    .filter((item) => state.view !== 'browse' || screeningDateKey(item) === state.selectedDate)
+    .filter((item) => state.view !== 'browse' || matchesDateFilter(item))
     .filter((item) => state.view !== 'saved' || state.saved.has(item.id))
     .filter((item) => !query || [item.title, item.director, item.venue, item.genre, item.format, item.notes, item.sourceName].some((field) => String(field || '').toLowerCase().includes(query)))
     .sort((a, b) => {
@@ -351,9 +404,16 @@ function cardFor(item) {
     posterImage.remove();
   }
   fragment.querySelector('.poster-kicker').textContent = `${primary.year || '—'} / ${primary.genre || 'Repertory'}`;
-  fragment.querySelector('.poster-title').textContent = primary.title || 'Untitled screening';
+  const titleText = primary.title || 'Untitled screening';
+  const posterTitle = fragment.querySelector('.poster-title');
+  posterTitle.textContent = titleText;
+  posterTitle.dataset.id = primary.id;
+  posterTitle.setAttribute('aria-label', `View details for ${titleText}`);
   fragment.querySelector('.poster-format').textContent = primary.format || 'Format not listed';
-  fragment.querySelector('.film-title').textContent = primary.title || 'Untitled screening';
+  const filmTitle = fragment.querySelector('.film-title');
+  filmTitle.textContent = titleText;
+  filmTitle.dataset.id = primary.id;
+  filmTitle.setAttribute('aria-label', `View details for ${titleText}`);
   fragment.querySelector('.film-meta').textContent = `${primary.director || 'Director not listed'} · ${primary.year || '—'}`;
   fragment.querySelector('.distance').textContent = primary.neighborhood || primary.distance || 'Los Angeles';
   fragment.querySelector('.showing-date').textContent = primary.date || 'Date TBA';
@@ -375,13 +435,24 @@ function cardFor(item) {
     sourceLabel.title = `${primary.sourceUrl || ''}${primary.sourceLastChecked ? ` · checked ${primary.sourceLastChecked}` : ''}`;
     sourceLabel.href = primary.sourceUrl || primary.ticketUrl || '#';
   }
-  const saveButton = fragment.querySelector('.save-button');
   const saved = showings.some((showing) => state.saved.has(showing.id));
-  saveButton.dataset.id = primary.id;
-  saveButton.classList.toggle('saved', saved);
-  saveButton.setAttribute('aria-pressed', String(saved));
-  saveButton.setAttribute('aria-label', saved ? `Remove ${primary.title} from saved films` : `Save ${primary.title}`);
-  saveButton.querySelector('span').textContent = saved ? '♥' : '♡';
+  fragment.querySelectorAll('.save-button, .save-screening-button').forEach((saveButton) => {
+    saveButton.dataset.id = primary.id;
+    saveButton.classList.toggle('saved', saved);
+    saveButton.setAttribute('aria-pressed', String(saved));
+    saveButton.setAttribute('aria-label', saved ? `Remove ${primary.title} from saved screenings` : `Save ${primary.title} screening`);
+    const icon = saveButton.querySelector('.save-text-icon') || saveButton.querySelector('span');
+    if (icon) icon.textContent = saved ? '♥' : '♡';
+    const label = saveButton.querySelector('.save-text-label');
+    if (label) label.textContent = saved ? 'Saved' : 'Save';
+  });
+  const savedActions = fragment.querySelector('.saved-actions');
+  if (savedActions) {
+    savedActions.hidden = state.view !== 'saved';
+    savedActions.querySelectorAll('button').forEach((button) => { button.dataset.id = primary.id; });
+  }
+  const inlineSave = fragment.querySelector('.save-screening-button');
+  if (inlineSave) inlineSave.hidden = state.view === 'saved';
   const detailsButton = fragment.querySelector('.details-button');
   detailsButton.dataset.id = primary.id;
   const ticketLink = fragment.querySelector('.ticket-link');
@@ -403,16 +474,29 @@ function render() {
   if (emptyState) emptyState.hidden = calendarMode || items.length !== 0;
   if (!calendarMode && state.view === 'browse') {
     if (emptyHeading) emptyHeading.textContent = `No screenings on ${dayLabel?.textContent || 'this day'}.`;
-    if (emptyMessage) emptyMessage.textContent = 'Try the arrows or open the calendar to choose another date.';
+    if (emptyMessage) emptyMessage.textContent = state.dateFilter === 'upcoming' ? 'The live index has no upcoming screenings yet.' : 'Try another date, filter, venue, or search term.';
   } else if (!calendarMode) {
     if (emptyHeading) emptyHeading.textContent = 'No saved screenings found.';
-    if (emptyMessage) emptyMessage.textContent = 'Save a screening and it will appear here.';
+    if (emptyMessage) emptyMessage.textContent = 'Use Save on any screening card to build your list.';
   }
   if (resultCount) resultCount.textContent = `${groupedItems.length} film${groupedItems.length === 1 ? '' : 's'} · ${items.length} show${items.length === 1 ? '' : 's'} · ${cityLabel(state.city)}`;
   if (citySelect) citySelect.value = state.city;
   updateSavedCounts();
   if (calendarMode) renderCalendar(items);
   document.querySelectorAll('[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === state.view));
+}
+
+function selectDateFilter(filter) {
+  const today = dateFromKey(todayDateKey());
+  state.dateFilter = filter;
+  if (filter === 'tomorrow') today.setDate(today.getDate() + 1);
+  if (filter === 'weekend') today.setDate(today.getDate() + (today.getDay() === 0 ? 0 : 6 - today.getDay()));
+  state.selectedDate = dateKeyFromDate(today);
+  state.calendarSelectedDate = state.selectedDate;
+  state.calendarMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  state.view = 'browse';
+  render();
+  loadScreenings();
 }
 
 function toggleSaved(id) {
@@ -464,11 +548,13 @@ function downloadCalendar(id) {
     const daysUntilSaturday = (6 - start.getDay() + 7) % 7;
     start.setDate(start.getDate() + daysUntilSaturday);
   }
-  const [clock, meridiem] = item.time.split(' ');
-  let [hours, minutes] = clock.split(':').map(Number);
-  if (meridiem === 'PM' && hours !== 12) hours += 12;
-  if (meridiem === 'AM' && hours === 12) hours = 0;
-  start.setHours(hours, minutes, 0, 0);
+  if (item.time) {
+    const [clock, meridiem] = item.time.split(' ');
+    let [hours, minutes] = clock.split(':').map(Number);
+    if (meridiem === 'PM' && hours !== 12) hours += 12;
+    if (meridiem === 'AM' && hours === 12) hours = 0;
+    start.setHours(hours, minutes, 0, 0);
+  }
   const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
   const ics = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Rerun//Screening//EN','BEGIN:VEVENT',`UID:${item.id}@rerun.app`,`DTSTAMP:${calendarValue(new Date())}`,`DTSTART:${calendarValue(start)}`,`DTEND:${calendarValue(end)}`,`SUMMARY:${item.title} at ${item.venue}`,`LOCATION:${item.venue}`,`DESCRIPTION:${item.synopsis} Tickets: ${item.ticketUrl}`,'END:VEVENT','END:VCALENDAR'].join('\r\n');
   const url = URL.createObjectURL(new Blob([ics], { type:'text/calendar' }));
@@ -545,6 +631,10 @@ function feedStatus(meta = {}) {
 
 function incompleteFeedStatus(payload = {}) {
   const sources = payload.sources || payload.meta?.sources || [];
+  const refreshStatus = payload.meta?.refreshStatus || payload.meta?.status || '';
+  const initialIndex = ['seed', 'unknown'].includes(String(refreshStatus).toLowerCase())
+    || sources.some((source) => ['seed', 'unknown'].includes(String(source.status || '').toLowerCase()));
+  if (initialIndex) return 'Preparing the initial live index…';
   const waitingSources = sources.filter((source) => source.required !== false && source.status !== 'verified');
   const waiting = waitingSources.map((source) => source.name).filter(Boolean);
   const firstError = waitingSources.flatMap((source) => source.errors || []).find(Boolean);
@@ -600,12 +690,22 @@ async function loadScreenings(forceRefresh = false) {
 }
 
 document.addEventListener('click', (event) => {
+  const dateFilter = event.target.closest('.date-filter');
+  if (dateFilter) {
+    selectDateFilter(dateFilter.dataset.dateFilter);
+    return;
+  }
   const viewButton = event.target.closest('[data-view]');
   if (viewButton) {
     state.view = viewButton.dataset.view;
     loadScreenings();
     if (mobileNav) { mobileNav.hidden = true; menuButton?.setAttribute('aria-expanded', 'false'); }
     if ((state.view === 'saved' || state.view === 'calendar') && document.querySelector('#screenings')) document.querySelector('#screenings').scrollIntoView({ behavior:'smooth' });
+    return;
+  }
+  const titleButton = event.target.closest('.title-action');
+  if (titleButton) {
+    openDetails(titleButton.dataset.id);
     return;
   }
   const calendarDay = event.target.closest('.calendar-day[data-date]');
@@ -619,7 +719,7 @@ document.addEventListener('click', (event) => {
     }
     return;
   }
-  const saveButton = event.target.closest('.save-button');
+  const saveButton = event.target.closest('.save-button, .save-screening-button');
   if (saveButton) { toggleSaved(saveButton.dataset.id); return; }
   const detailsButton = event.target.closest('.details-button');
   if (detailsButton) { openDetails(detailsButton.dataset.id); return; }
@@ -627,6 +727,12 @@ document.addEventListener('click', (event) => {
   if (calendarButton) { downloadCalendar(calendarButton.dataset.id); return; }
   const shareButton = event.target.closest('.dialog-share');
   if (shareButton) { shareScreening(shareButton.dataset.id); return; }
+  const calendarCardButton = event.target.closest('.calendar-card-button');
+  if (calendarCardButton) { downloadCalendar(calendarCardButton.dataset.id); return; }
+  const shareCardButton = event.target.closest('.share-card-button');
+  if (shareCardButton) { shareScreening(shareCardButton.dataset.id); return; }
+  const removeSavedButton = event.target.closest('.remove-saved-button');
+  if (removeSavedButton) { toggleSaved(removeSavedButton.dataset.id); return; }
   if (event.target.closest('.dialog-close')) dialog?.close();
   if (event.target.closest('#clear-filters')) {
     state.query = ''; if (searchInput) searchInput.value = '';
@@ -686,5 +792,5 @@ const initialScreening = new URLSearchParams(location.search).get('screening');
 if (initialScreening) openDetails(initialScreening);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20260909-inline-logo'));
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20260909-planning-filters'));
 }
