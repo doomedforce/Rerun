@@ -1,0 +1,19 @@
+{
+  "lastRefresh": "2026-09-08T22:49:31.561258Z",
+  "checkedAt": "2026-09-08T22:49:31.561258Z",
+  "startedAt": "2026-09-08T22:47:48.505637Z",
+  "durationMs": 103085,
+  "status": "ok",
+  "feedPolicyVersion": 12,
+  "mode": "live",
+  "stale": false,
+  "sourceCount": 4,
+  "requiredSourceCount": 2,
+  "verifiedSourceCount": 4,
+  "verifiedRequiredSourceCount": 2,
+  "eventCount": 279,
+  "errors": [],
+  "optionalErrors": [],
+  "networkRequests": 426,
+  "cacheHits": 60
+}

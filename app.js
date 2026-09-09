@@ -66,11 +66,19 @@ function ensureRefreshButton() {
 }
 
 function ensureLogoFallbacks() {
-  document.querySelectorAll('img[src$="rerun-logo.svg"]').forEach((image) => {
-    image.src = 'assets/rerun-logo.png';
-  });
-  document.querySelectorAll('img[src$="rerun-mark.svg"]').forEach((image) => {
-    image.src = 'assets/rerun-mark.png';
+  document.querySelectorAll('img').forEach((image) => {
+    const source = image.getAttribute('src') || '';
+    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20260909-mobile-logo';
+    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20260909-mobile-logo';
+    image.addEventListener('error', () => {
+      if (image.dataset.logoFallbackApplied) return;
+      image.dataset.logoFallbackApplied = 'true';
+      if (image.classList.contains('brand-logo') || image.closest('.hero-branding, .calendar-branding')) {
+        image.src = '/assets/rerun-logo.svg?v=20260909-mobile-logo';
+      } else if (image.closest('.footer-brand')) {
+        image.src = '/assets/rerun-mark.svg?v=20260909-mobile-logo';
+      }
+    }, { once: true });
   });
 }
 
@@ -685,5 +693,5 @@ const initialScreening = new URLSearchParams(location.search).get('screening');
 if (initialScreening) openDetails(initialScreening);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js?v=20260908-tagline-deploy'));
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20260909-mobile-logo'));
 }
