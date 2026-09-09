@@ -351,7 +351,7 @@ class RerunHandler(BaseHTTPRequestHandler):
                 self.send_json(503, {"error": "Instagram publisher is not configured."})
                 return
             maybe_refresh(force=True)
-            result = instagram_service.publish_today()
+            result = instagram_service.publish_today(force=True)
             ok = result.get("status") in {"posted", "skipped"}
             self.send_json(200 if ok else 503, {"ok": ok, **result})
             return

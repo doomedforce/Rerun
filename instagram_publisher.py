@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, urlencode
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -21,7 +23,13 @@ DATA_DIR = ROOT / "data"
 STATE_PATH = DATA_DIR / "instagram-post-state.json"
 LOS_ANGELES = ZoneInfo("America/Los_Angeles")
 API_VERSION = os.environ.get("RERUN_INSTAGRAM_API_VERSION", "v23.0")
-API_ROOT = f"https://graph.facebook.com/{API_VERSION}"
+API_MODE = os.environ.get("RERUN_INSTAGRAM_API_MODE", "instagram-login").strip().lower()
+if API_MODE in {"facebook", "facebook-login"}:
+    API_ROOT = f"https://graph.facebook.com/{API_VERSION}"
+    API_MODE = "facebook-login"
+else:
+    API_ROOT = f"https://graph.instagram.com/{API_VERSION}"
+    API_MODE = "instagram-login"
 RETRY_MINUTES = 15
 
 
@@ -117,27 +125,59 @@ def api_request(path: str, values: dict) -> dict:
     try:
         with urlopen(request, timeout=30) as response:
             return json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        raise RuntimeError(f"Instagram API request failed: {format_http_error(error)}") from error
     except Exception as error:
         raise RuntimeError(f"Instagram API request failed: {error}") from error
+
+
+def format_http_error(error: HTTPError) -> str:
+    """Preserve Meta's useful error message without exposing the access token."""
+
+    try:
+        raw = error.read().decode("utf-8", errors="replace")
+    except Exception:
+        raw = ""
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        details = payload.get("error")
+        if isinstance(details, dict):
+            message = details.get("message") or details.get("error_user_msg")
+            code = details.get("code")
+            if message:
+                return f"HTTP {error.code}: {message}" + (f" (code {code})" if code else "")
+    return f"HTTP {error.code}: {raw[:500] or error.reason}"
 
 
 def instagram_user_id(token: str) -> str:
     configured = os.environ.get("RERUN_INSTAGRAM_USER_ID")
     if configured:
         return configured
-    query = urlencode({"fields": "id,username", "access_token": token})
+    if API_MODE == "facebook-login":
+        raise RuntimeError(
+            "RERUN_INSTAGRAM_USER_ID is required for facebook-login mode; "
+            "use the Instagram professional account ID."
+        )
+    query = urlencode({"fields": "user_id,username", "access_token": token})
     request = Request(f"{API_ROOT}/me?{query}", method="GET")
     try:
         with urlopen(request, timeout=30) as response:
             payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        raise RuntimeError(
+            f"Could not resolve the Instagram account from the token: {format_http_error(error)}"
+        ) from error
     except Exception as error:
         raise RuntimeError(f"Could not resolve the Instagram account from the token: {error}") from error
-    if not payload.get("id"):
+    if not payload.get("user_id") and not payload.get("id"):
         raise RuntimeError(f"Instagram account lookup returned no id: {payload}")
-    return str(payload["id"])
+    return str(payload.get("user_id") or payload["id"])
 
 
-def publish_today() -> dict:
+def publish_today(force: bool = False) -> dict:
     if not enabled():
         return {"status": "disabled", "reason": "Instagram secrets are not configured"}
 
@@ -146,7 +186,7 @@ def publish_today() -> dict:
     if state.get("date") == today and state.get("status") in {"posted", "skipped"}:
         return state
     retry_at = state.get("retryAt")
-    if state.get("date") == today and retry_at:
+    if not force and state.get("date") == today and retry_at:
         try:
             if datetime.fromisoformat(retry_at.replace("Z", "+00:00")) > datetime.now(timezone.utc):
                 return state
@@ -212,4 +252,4 @@ def seconds_until_next_run() -> int:
 
 
 if __name__ == "__main__":
-    print(json.dumps(publish_today(), indent=2, ensure_ascii=False))
+    print(json.dumps(publish_today(force="--force" in sys.argv[1:]), indent=2, ensure_ascii=False))

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 80" role="img" aria-labelledby="title desc">
+  <title id="title">Rerun</title>
+  <desc id="desc">Rerun wordmark with a film-strip R symbol for light backgrounds.</desc>
+  <g transform="translate(6 14)">
+    <path fill="#A87520" d="M6 5h10v42H6z"/>
+    <path fill="#A87520" d="M16 5h15c8.8 0 14.5 4.5 14.5 11.5 0 5-3 8.9-8.2 10.7L47 47H35.7l-9-16.4H16V22h9.5c4.1 0 6.5-1.7 6.5-5s-2.4-5-6.5-5H16z"/>
+    <path fill="#B43B27" d="M16 12h9.5c4.1 0 6.5 1.7 6.5 5 0 1.8-.8 3.1-2.2 4.1H16z"/>
+    <path fill="#B43B27" d="M27 30h8.7L47 47H35.7z"/>
+    <g fill="#F7F1E5">
+      <rect x="8" y="8" width="6" height="4" rx="1"/>
+      <rect x="8" y="16" width="6" height="4" rx="1"/>
+      <rect x="8" y="24" width="6" height="4" rx="1"/>
+      <rect x="8" y="32" width="6" height="4" rx="1"/>
+      <rect x="8" y="40" width="6" height="4" rx="1"/>
+    </g>
+  </g>
+  <text x="76" y="59" fill="#15130F" stroke="#A87520" stroke-width="0.8" paint-order="stroke fill" font-family="Fraunces, Georgia, serif" font-size="55" font-weight="600" letter-spacing="-3.5">Rerun</text>
+</svg>

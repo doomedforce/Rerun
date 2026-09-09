@@ -200,7 +200,15 @@ RERUN_INSTAGRAM_ACCESS_TOKEN=...
 RERUN_PUBLIC_BASE_URL=https://your-rerun-domain.example
 ```
 
-Optional settings are `RERUN_INSTAGRAM_USER_ID`,
+The default mode is `instagram-login`, which uses Instagram's
+`graph.instagram.com` API and expects an Instagram Login access token with
+content-publishing permission. For a token obtained through Facebook Login,
+set `RERUN_INSTAGRAM_API_MODE=facebook-login` and also set
+`RERUN_INSTAGRAM_USER_ID` to the professional Instagram account ID.
+
+Optional settings are `RERUN_INSTAGRAM_API_MODE`, `RERUN_INSTAGRAM_USER_ID`,
 `RERUN_INSTAGRAM_API_VERSION`, `RERUN_INSTAGRAM_SELECTION_LIMIT`, and a
 comma-separated `RERUN_INSTAGRAM_FEATURED_IDS` list for editorial overrides.
 The publisher stays disabled until the token and public base URL are present.
+The manual `/api/instagram/publish` route forces a retry after a previous
+publishing error; the scheduled worker still observes the normal retry delay.

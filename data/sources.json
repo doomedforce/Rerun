@@ -1,0 +1,56 @@
+[
+  {
+    "id": "american-cinematheque",
+    "name": "American Cinematheque",
+    "city": "los-angeles",
+    "url": "https://www.americancinematheque.com/now-showing/",
+    "adapter": "american_cinematheque",
+    "lastChecked": "2026-09-07T00:00:00Z",
+    "status": "seed",
+    "eventCount": 12,
+    "pagesChecked": 0,
+    "errors": []
+  },
+  {
+    "id": "new-beverly",
+    "name": "New Beverly Cinema",
+    "city": "los-angeles",
+    "url": "https://ticketing.uswest.veezi.com/sessions/?siteToken=fmtswb0qqbym3de6c4bbsqj89m",
+    "scheduleUrl": "https://thenewbev.com/schedule/",
+    "sessionsUrl": "https://ticketing.uswest.veezi.com/sessions/?siteToken=fmtswb0qqbym3de6c4bbsqj89m",
+    "adapter": "new_beverly",
+    "required": false,
+    "lastChecked": "2026-09-07T00:00:00Z",
+    "status": "seed",
+    "eventCount": 18,
+    "pagesChecked": 0,
+    "errors": []
+  },
+  {
+    "id": "vista-theater",
+    "name": "Vista Theater Hollywood",
+    "city": "los-angeles",
+    "url": "https://ticketing.uswest.veezi.com/sessions/?siteToken=20xhpa3yt2hhkwt4zjvfcwsaww",
+    "scheduleUrl": "https://www.vistatheaterhollywood.com/schedule/",
+    "sessionsUrl": "https://ticketing.uswest.veezi.com/sessions/?siteToken=20xhpa3yt2hhkwt4zjvfcwsaww",
+    "adapter": "vista_theater",
+    "lastChecked": "2026-09-07T00:00:00Z",
+    "status": "seed",
+    "eventCount": 0,
+    "pagesChecked": 0,
+    "errors": []
+  },
+  {
+    "id": "vidiots",
+    "name": "Vidiots",
+    "city": "los-angeles",
+    "url": "https://vidiotsfoundation.org/coming-soon/",
+    "adapter": "vidiots",
+    "required": false,
+    "lastChecked": "2026-09-07T00:00:00Z",
+    "status": "seed",
+    "eventCount": 0,
+    "pagesChecked": 0,
+    "errors": []
+  }
+]

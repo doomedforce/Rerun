@@ -212,10 +212,12 @@ function runAlertCommand(email) {
   });
 }
 
-function runInstagramPublishCommand() {
+function runInstagramPublishCommand(force = false) {
   const executable = process.env.RERUN_PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
   return new Promise((resolve) => {
-    const child = spawn(executable, [path.join(ROOT, 'instagram_publisher.py')], { cwd: ROOT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const args = [path.join(ROOT, 'instagram_publisher.py')];
+    if (force) args.push('--force');
+    const child = spawn(executable, args, { cwd: ROOT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.on('data', (chunk) => { output += chunk.toString(); });
     child.on('error', () => resolve({ status: 'error', error: 'Instagram publisher unavailable.' }));
@@ -379,7 +381,7 @@ async function handleApi(request, response, requestUrl) {
       return sendJson(response, 503, { error: 'Instagram publisher is not configured.' });
     }
     await runPythonRefresh(true);
-    const result = await runInstagramPublishCommand();
+    const result = await runInstagramPublishCommand(true);
     const ok = ['posted', 'skipped'].includes(result.status);
     return sendJson(response, ok ? 200 : 503, { ok, ...result });
   }
