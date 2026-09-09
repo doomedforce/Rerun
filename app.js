@@ -451,8 +451,6 @@ function cardFor(item) {
     savedActions.hidden = state.view !== 'saved';
     savedActions.querySelectorAll('button').forEach((button) => { button.dataset.id = primary.id; });
   }
-  const inlineSave = fragment.querySelector('.save-screening-button');
-  if (inlineSave) inlineSave.hidden = state.view === 'saved';
   const detailsButton = fragment.querySelector('.details-button');
   detailsButton.dataset.id = primary.id;
   const ticketLink = fragment.querySelector('.ticket-link');
@@ -731,8 +729,6 @@ document.addEventListener('click', (event) => {
   if (calendarCardButton) { downloadCalendar(calendarCardButton.dataset.id); return; }
   const shareCardButton = event.target.closest('.share-card-button');
   if (shareCardButton) { shareScreening(shareCardButton.dataset.id); return; }
-  const removeSavedButton = event.target.closest('.remove-saved-button');
-  if (removeSavedButton) { toggleSaved(removeSavedButton.dataset.id); return; }
   if (event.target.closest('.dialog-close')) dialog?.close();
   if (event.target.closest('#clear-filters')) {
     state.query = ''; if (searchInput) searchInput.value = '';

@@ -361,7 +361,6 @@ button { -webkit-tap-highlight-color: transparent; }
 .saved-actions { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .7rem; padding-top: .7rem; border-top: 1px solid var(--line); }
 .card-quick-button { border: 1px solid var(--line); background: transparent; color: var(--paper-dim); padding: .45rem .55rem; cursor: pointer; font: 500 .52rem var(--mono); text-transform: uppercase; }
 .card-quick-button:hover, .card-quick-button:focus-visible { border-color: var(--gold); color: var(--gold); }
-.remove-saved-button { color: var(--red); }
 .empty-state { text-align: center; padding: 6rem 1rem; }
 .empty-state > div { font-size: 3rem; color: var(--red); }
 .empty-state h3 { font: 500 2rem var(--serif); margin: .5rem 0; }

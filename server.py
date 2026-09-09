@@ -50,6 +50,7 @@ BLOCKED_STATIC = {
     "/data/last-refresh.json",
     "/data/snapshot.json",
     "/data/worker-state.json",
+    "/data/instagram-post-state.json",
 }
 REFRESH_LOCK = threading.Lock()
 REFRESH_TOKEN = os.environ.get("RERUN_REFRESH_TOKEN", "")

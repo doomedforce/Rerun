@@ -169,9 +169,29 @@ verified before publishing or using it in a commercial context.
 - Search across title, director, genre, format, and venue
 - Quick date filters for tonight, tomorrow, this weekend, and all upcoming screenings
 - Soonest showtime or theatre sorting across the full date range
-- Save and unsave screenings with browser `localStorage`; saved cards expose ticket, calendar, share, and remove actions
+- Save and unsave screenings with browser `localStorage`; saved cards expose ticket, calendar, and share actions, while a second Save click removes a screening
 - Film details modal with synopsis, format, venue, address, source, and notes
 - Shareable screening URLs (`?screening=...`)
 - Calendar `.ics` download from every screening detail view
 - SQLite-backed alert signup connected to the local API
 - Installable/offline shell through `manifest.json` and `service-worker.js`
+
+## Instagram Today in LA publisher
+
+The scheduled worker can publish one daily Instagram post after midnight Pacific
+using Meta's Content Publishing API. It selects future, official-source
+screenings for Los Angeles, prefers one screening per venue, uses the first
+available official image as the post artwork, and records the date and returned
+media ID in `data/instagram-post-state.json` so restarts do not duplicate a post.
+
+Configure these deployment secrets; never commit the access token:
+
+```text
+RERUN_INSTAGRAM_ACCESS_TOKEN=...
+RERUN_PUBLIC_BASE_URL=https://your-rerun-domain.example
+```
+
+Optional settings are `RERUN_INSTAGRAM_USER_ID`,
+`RERUN_INSTAGRAM_API_VERSION`, `RERUN_INSTAGRAM_SELECTION_LIMIT`, and a
+comma-separated `RERUN_INSTAGRAM_FEATURED_IDS` list for editorial overrides.
+The publisher stays disabled until the token and public base URL are present.

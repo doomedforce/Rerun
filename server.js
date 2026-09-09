@@ -25,7 +25,7 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon'
 };
 
-const BLOCKED_STATIC = new Set(['/server.js', '/server.py', '/scraper.py', '/refresh.py', '/refresh_worker.py', '/alerts.py', '/package.json', '/README.md', '/data/subscribers.json', '/data/rerun.sqlite3', '/data/rerun.sqlite3-shm', '/data/rerun.sqlite3-wal', '/data/sources.json', '/data/last-refresh.json', '/data/snapshot.json', '/data/worker-state.json']);
+const BLOCKED_STATIC = new Set(['/server.js', '/server.py', '/scraper.py', '/refresh.py', '/refresh_worker.py', '/alerts.py', '/instagram_publisher.py', '/package.json', '/README.md', '/data/subscribers.json', '/data/rerun.sqlite3', '/data/rerun.sqlite3-shm', '/data/rerun.sqlite3-wal', '/data/sources.json', '/data/last-refresh.json', '/data/snapshot.json', '/data/worker-state.json', '/data/instagram-post-state.json']);
 const RETRY_BACKOFF_MS = Number(process.env.RERUN_REFRESH_RETRY_SECONDS || 600) * 1000;
 const FEED_POLICY_VERSION = 14;
 const REFRESH_TOKEN = process.env.RERUN_REFRESH_TOKEN || '';

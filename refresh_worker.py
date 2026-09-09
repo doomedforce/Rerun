@@ -11,6 +11,11 @@ from pathlib import Path
 
 import refresh
 
+try:
+    import instagram_publisher
+except ImportError:  # pragma: no cover - only relevant in reduced deployments
+    instagram_publisher = None
+
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -42,6 +47,16 @@ def wait_seconds(meta: dict) -> int:
         if remaining > 0:
             return min(900, max(POLL_SECONDS, remaining))
     return POLL_SECONDS
+
+
+def maybe_publish_instagram() -> None:
+    if instagram_publisher is None or not instagram_publisher.enabled():
+        return
+    if instagram_publisher.seconds_until_next_run() > 1:
+        return
+    result = instagram_publisher.publish_today()
+    if result.get("status") in {"posted", "skipped", "error"}:
+        print(f"[instagram] {result.get('status')}: {result.get('reason') or result.get('mediaId') or result.get('error', '')}", flush=True)
 
 
 def run_worker(stop_event=None) -> None:
@@ -86,7 +101,10 @@ def run_worker(stop_event=None) -> None:
                 state["nextRunAt"] = (refresh.utc_now().timestamp() + wait_seconds(meta))
                 state["nextRunAt"] = datetime.fromtimestamp(state["nextRunAt"], timezone.utc).isoformat().replace("+00:00", "Z")
                 write_state(state)
+            maybe_publish_instagram()
             delay = wait_seconds(meta)
+            if instagram_publisher is not None and instagram_publisher.enabled():
+                delay = min(delay, max(1, instagram_publisher.seconds_until_next_run()))
             if stop_event is not None:
                 stop_event.wait(delay)
             else:
