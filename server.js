@@ -212,6 +212,20 @@ function runAlertCommand(email) {
   });
 }
 
+function runInstagramPublishCommand() {
+  const executable = process.env.RERUN_PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+  return new Promise((resolve) => {
+    const child = spawn(executable, [path.join(ROOT, 'instagram_publisher.py')], { cwd: ROOT, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    child.stdout.on('data', (chunk) => { output += chunk.toString(); });
+    child.on('error', () => resolve({ status: 'error', error: 'Instagram publisher unavailable.' }));
+    child.on('close', (code) => {
+      try { resolve(code === 0 ? JSON.parse(output || '{}') : { status: 'error', error: 'Instagram publisher failed.' }); }
+      catch (error) { resolve({ status: 'error', error: 'Instagram publisher returned invalid output.' }); }
+    });
+  });
+}
+
 function feedMeta(city, data, venues, sources, refreshMeta) {
   return {
     count: data.length,
@@ -357,6 +371,17 @@ async function handleApi(request, response, requestUrl) {
     const sources = (await readCatalog()).sources || [];
     const ok = feedIsComplete(meta, sources);
     return sendJson(response, ok ? 200 : 503, { ok, completed: ok, meta, sources });
+  }
+
+  if (request.method === 'POST' && pathname === '/api/instagram/publish') {
+    if (!refreshAuthorized(request)) return sendJson(response, 403, { error: 'Instagram publishing requires a valid refresh token.' });
+    if (!process.env.RERUN_INSTAGRAM_ACCESS_TOKEN || !process.env.RERUN_PUBLIC_BASE_URL) {
+      return sendJson(response, 503, { error: 'Instagram publisher is not configured.' });
+    }
+    await runPythonRefresh(true);
+    const result = await runInstagramPublishCommand();
+    const ok = ['posted', 'skipped'].includes(result.status);
+    return sendJson(response, ok ? 200 : 503, { ok, ...result });
   }
 
   if (request.method === 'POST' && pathname === '/api/notify') {

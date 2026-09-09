@@ -117,6 +117,15 @@ curl -X POST \
   http://localhost:4173/api/refresh
 ```
 
+After configuring the Instagram secrets, the same authenticated token can
+trigger a one-time current-day post:
+
+```bash
+curl -X POST \
+  -H "X-Rerun-Refresh-Token: $RERUN_REFRESH_TOKEN" \
+  https://your-rerun-host.example/api/instagram/publish
+```
+
 Refresh timing, worker state, and source health are available from
 `GET /api/health` and `GET /api/sources`. `RERUN_WORKER_POLL_SECONDS` controls
 how often the worker checks for a due refresh; `RERUN_REFRESH_TTL_SECONDS`
