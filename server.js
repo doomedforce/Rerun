@@ -28,6 +28,15 @@ const REFRESH_TTL_MS = Number(process.env.RERUN_REFRESH_TTL_SECONDS || 1800) * 1
 const RETRY_BACKOFF_MS = Number(process.env.RERUN_REFRESH_RETRY_SECONDS || 600) * 1000;
 const FEED_POLICY_VERSION = 12;
 const OPTIONAL_SOURCE_IDS = new Set(['new-beverly', 'vidiots']);
+const IMAGE_CACHE = new Map();
+const IMAGE_CACHE_LIMIT = 64;
+const IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const IMAGE_ALLOWED_HOSTS = new Set([
+  'americancinematheque.com', 'assets.americancinematheque.com',
+  'thenewbev.com', 'www.thenewbev.com',
+  'vistatheaterhollywood.com', 'www.vistatheaterhollywood.com',
+  'vidiotsfoundation.org', 'www.vidiotsfoundation.org', 'la.teentix.org'
+]);
 let refreshInFlight = null;
 
 const jsonHeaders = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
@@ -49,6 +58,56 @@ async function writeJson(fileName, value) {
 function sendJson(response, status, payload) {
   response.writeHead(status, jsonHeaders);
   response.end(JSON.stringify(payload));
+}
+
+function imageHostAllowed(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
+  return IMAGE_ALLOWED_HOSTS.has(host) || [...IMAGE_ALLOWED_HOSTS].some((domain) => host.endsWith(`.${domain}`));
+}
+
+async function handleImage(response, requestUrl) {
+  const rawUrl = requestUrl.searchParams.get('url') || '';
+  let target;
+  try {
+    target = new URL(rawUrl);
+  } catch (error) {
+    response.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return response.end('Invalid image URL');
+  }
+  if (target.protocol !== 'https:' || !imageHostAllowed(target.hostname)) {
+    response.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return response.end('Image source is not an approved official venue domain');
+  }
+  if (IMAGE_CACHE.has(target.href)) {
+    const cached = IMAGE_CACHE.get(target.href);
+    response.writeHead(200, { 'Content-Type': cached.contentType, 'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400', 'Content-Length': cached.body.length });
+    return response.end(cached.body);
+  }
+  try {
+    const upstream = await fetch(target, {
+      headers: {
+        Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        Referer: `${target.origin}/`,
+        'User-Agent': 'Rerun/0.4 (+https://rerun.local; official venue artwork proxy)'
+      },
+      signal: AbortSignal.timeout(15000)
+    });
+    const finalUrl = new URL(upstream.url || target.href);
+    if (!upstream.ok || finalUrl.protocol !== 'https:' || !imageHostAllowed(finalUrl.hostname)) {
+      throw new Error(`upstream returned ${upstream.status}`);
+    }
+    const contentType = (upstream.headers.get('content-type') || '').split(';', 1)[0].toLowerCase();
+    if (!contentType.startsWith('image/')) throw new Error('approved source did not return an image');
+    const body = Buffer.from(await upstream.arrayBuffer());
+    if (body.length > IMAGE_MAX_BYTES) throw new Error('image exceeds the size limit');
+    if (IMAGE_CACHE.size >= IMAGE_CACHE_LIMIT) IMAGE_CACHE.delete(IMAGE_CACHE.keys().next().value);
+    IMAGE_CACHE.set(target.href, { contentType, body });
+    response.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400', 'Content-Length': body.length });
+    return response.end(body);
+  } catch (error) {
+    response.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return response.end(`Image unavailable: ${error.message}`);
+  }
 }
 
 function normalize(value) {
@@ -184,6 +243,10 @@ async function handleApi(request, response, requestUrl) {
         stale: Boolean(refreshMeta.stale ?? true)
       }
     });
+  }
+
+  if (request.method === 'GET' && pathname === '/api/image') {
+    return handleImage(response, requestUrl);
   }
 
   if (request.method === 'GET' && pathname === '/api/screenings') {

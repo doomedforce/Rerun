@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rerun-shell-v27';
+const CACHE_NAME = 'rerun-shell-v29';
 const SHELL = ['./', './index.html', './calendar.html', './styles.css', './app.js', './manifest.json', './assets/rerun-mark.png?v=20260909-mobile-logo', './assets/rerun-logo.png?v=20260909-mobile-logo', './data/screenings.json', './data/venues.json'];
 
 self.addEventListener('install', (event) => {

@@ -89,6 +89,17 @@ function apiUrl(pathname) {
   return `${API_BASE}${pathname}`;
 }
 
+function imageUrl(image) {
+  if (!image) return '';
+  try {
+    const parsed = new URL(image, location.href);
+    if (location.protocol === 'file:' || parsed.origin === location.origin) return parsed.href;
+    return apiUrl(`/api/image?url=${encodeURIComponent(parsed.href)}`);
+  } catch (error) {
+    return image;
+  }
+}
+
 function screeningsApiPath(forceRefresh = false) {
   const params = new URLSearchParams({ city: state.city, limit: '500' });
   // Browse only needs the selected day; calendar/saved views need the full
@@ -348,7 +359,7 @@ function cardFor(item) {
   poster.style.setProperty('--poster-color', primary.color || '#a92f23');
   const posterImage = fragment.querySelector('.poster-image');
   if (primary.image) {
-    posterImage.src = primary.image;
+    posterImage.src = imageUrl(primary.image);
     posterImage.alt = primary.imageAlt || `${primary.title} film still`;
     posterImage.addEventListener('error', () => posterImage.remove());
   } else {
@@ -441,7 +452,7 @@ function openDetails(id) {
     .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
   const whenLabel = relatedShowings.length > 1 ? relatedShowings.map((showing) => showing.time).join(' · ') : (item.time || 'Time TBA');
   history.replaceState(null, '', `${location.pathname}?screening=${encodeURIComponent(id)}`);
-  const image = item.image ? `<img class="dialog-poster-image" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.imageAlt || `${item.title} film still`)}">` : '';
+  const image = item.image ? `<img class="dialog-poster-image" src="${escapeHtml(imageUrl(item.image))}" alt="${escapeHtml(item.imageAlt || `${item.title} film still`)}">` : '';
   const notesRow = item.notes ? `<div class="detail-row"><span>Program note</span><strong>${escapeHtml(item.notes)}</strong></div>` : '';
   const addressRow = item.address ? `<div class="detail-row"><span>Address</span><strong>${escapeHtml(item.address)}</strong></div>` : '';
   const checkedRow = item.sourceLastChecked ? `<div class="detail-row"><span>Source check</span><strong>${escapeHtml(item.sourceLastChecked)}</strong></div>` : '';
@@ -693,5 +704,5 @@ const initialScreening = new URLSearchParams(location.search).get('screening');
 if (initialScreening) openDetails(initialScreening);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20260909-mobile-logo'));
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20260909-inline-logo'));
 }

@@ -11,6 +11,8 @@ import math
 import mimetypes
 import os
 import threading
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -39,6 +41,21 @@ BLOCKED_STATIC = {
     "/data/last-refresh.json",
 }
 REFRESH_LOCK = threading.Lock()
+IMAGE_CACHE = {}
+IMAGE_CACHE_LOCK = threading.Lock()
+IMAGE_CACHE_LIMIT = 64
+IMAGE_MAX_BYTES = 8 * 1024 * 1024
+IMAGE_ALLOWED_HOSTS = {
+    "americancinematheque.com",
+    "assets.americancinematheque.com",
+    "thenewbev.com",
+    "www.thenewbev.com",
+    "vistatheaterhollywood.com",
+    "www.vistatheaterhollywood.com",
+    "vidiotsfoundation.org",
+    "www.vidiotsfoundation.org",
+    "la.teentix.org",
+}
 
 
 def read_json(filename, fallback):
@@ -62,6 +79,42 @@ def normalized(value):
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def image_host_allowed(hostname):
+    host = str(hostname or "").lower().rstrip(".")
+    return host in IMAGE_ALLOWED_HOSTS or any(host.endswith(f".{domain}") for domain in IMAGE_ALLOWED_HOSTS)
+
+
+def fetch_remote_image(image_url):
+    parsed = urlparse(image_url)
+    if parsed.scheme != "https" or not parsed.hostname or not image_host_allowed(parsed.hostname):
+        raise ValueError("Image source is not an approved official venue domain.")
+    with IMAGE_CACHE_LOCK:
+        cached = IMAGE_CACHE.get(image_url)
+    if cached:
+        return cached
+    request = urllib.request.Request(
+        image_url,
+        headers={
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            "Referer": f"https://{parsed.hostname}/",
+            "User-Agent": "Rerun/0.4 (+https://rerun.local; official venue artwork proxy)",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=15) as upstream:
+        content_type = (upstream.headers.get_content_type() or "").lower()
+        if not content_type.startswith("image/"):
+            raise ValueError("Approved source did not return an image.")
+        body = upstream.read(IMAGE_MAX_BYTES + 1)
+    if len(body) > IMAGE_MAX_BYTES:
+        raise ValueError("Image exceeds the size limit.")
+    result = (content_type, body)
+    with IMAGE_CACHE_LOCK:
+        if len(IMAGE_CACHE) >= IMAGE_CACHE_LIMIT:
+            IMAGE_CACHE.pop(next(iter(IMAGE_CACHE)))
+        IMAGE_CACHE[image_url] = result
+    return result
 
 
 def iso_sort_value(item):
@@ -195,6 +248,19 @@ class RerunHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def handle_image(self, image_url):
+        try:
+            content_type, body = fetch_remote_image(image_url)
+        except (ValueError, urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as error:
+            self.send_error(502, f"Image unavailable: {error}")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/"):
@@ -273,6 +339,13 @@ class RerunHandler(BaseHTTPRequestHandler):
                     },
                 },
             )
+            return
+        if path == "/api/image":
+            image_url = query.get("url", [""])[0]
+            if not image_url:
+                self.send_error(400, "Missing image URL")
+                return
+            self.handle_image(image_url)
             return
         if path == "/api/screenings":
             city = normalized(query.get("city", [""])[0])

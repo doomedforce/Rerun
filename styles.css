@@ -70,7 +70,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .brand-logo {
   display: block;
   width: 134px;
-  height: auto;
+  height: 25.5px;
 }
 .site-header nav { display: flex; align-items: center; gap: 1.8rem; }
 .nav-link {
@@ -192,7 +192,7 @@ button { -webkit-tap-highlight-color: transparent; }
   letter-spacing: .08em;
   text-transform: uppercase;
 }
-.hero-branding img { width: clamp(150px, 19vw, 210px); height: auto; }
+.hero-branding .brand-logo { width: clamp(150px, 19vw, 210px); height: auto; aspect-ratio: 420 / 80; }
 .hero h1 {
   font: 500 clamp(5rem, 13vw, 13.5rem) / .73 var(--serif);
   letter-spacing: -.08em;
@@ -231,7 +231,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .hero-bottom > a span { font-size: 1rem; color: var(--gold); }
 
 .calendar-branding { margin-bottom: 1.8rem; }
-.calendar-branding img { width: clamp(160px, 21vw, 230px); height: auto; }
+.calendar-branding .brand-logo { width: clamp(160px, 21vw, 230px); height: auto; aspect-ratio: 420 / 80; }
 
 .browse { padding: clamp(5rem, 9vw, 9rem) var(--pad); background: var(--night-soft); border-top: 1px solid var(--line); }
 .section-top { display: flex; justify-content: space-between; align-items: end; gap: 2rem; }
@@ -410,7 +410,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .78); backdrop-filter: blur(8px); }
 .toast.show { transform: translate(-50%, 0); }
 footer { padding: 1.4rem var(--pad); background: #030303; color: var(--paper-dim); display: flex; justify-content: space-between; gap: 1rem; font: 400 .52rem var(--mono); text-transform: uppercase; }
 footer .footer-brand { display: flex; align-items: center; gap: .55rem; }
-footer .footer-brand img { width: 19px; height: 19px; }
+footer .footer-mark { display: block; width: 19px; height: 19px; flex: 0 0 auto; }
 footer a { color: var(--gold); }
 .instagram-link { display: inline-flex; align-items: center; gap: .4rem; color: var(--paper-dim); transition: color .2s, opacity .2s; }
 .instagram-link:hover, .instagram-link:focus-visible { color: var(--gold); }
@@ -443,7 +443,7 @@ footer a { color: var(--gold); }
 }
 @media (max-width: 600px) {
   .site-header { height: 66px; }
-  .brand-logo { width: 116px; }
+  .brand-logo { width: 116px; height: 22px; }
   .mobile-nav { top: 66px; }
   .hero { min-height: calc(100svh - 66px); padding-top: 3.5rem; }
   .hero-topline { align-items: flex-start; }
