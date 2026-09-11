@@ -70,6 +70,10 @@ IMAGE_ALLOWED_HOSTS = {
     "vidiotsfoundation.org",
     "www.vidiotsfoundation.org",
     "la.teentix.org",
+    "academymuseum.org",
+    "www.academymuseum.org",
+    "images.ctfassets.net",
+    "images.contentful.com",
 }
 
 

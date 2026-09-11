@@ -39,6 +39,7 @@ current Los Angeles sources are:
 - [New Beverly Cinema Veezi sessions](https://ticketing.uswest.veezi.com/sessions/?siteToken=fmtswb0qqbym3de6c4bbsqj89m)
 - [Vista Theater Hollywood Veezi sessions](https://ticketing.uswest.veezi.com/sessions/?siteToken=20xhpa3yt2hhkwt4zjvfcwsaww)
 - [Vidiots](https://vidiotsfoundation.org/) / [Coming Soon](https://vidiotsfoundation.org/coming-soon/)
+- [Academy Museum calendar — Screenings filter](https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O)
 
 Vidiots is traversed from its official homepage into the current upcoming-listing
 pages and then into each linked movie page. Individual official movie pages are
@@ -102,6 +103,16 @@ Vista detail parsing accepts both the schedule page's split month/day layout
 and the movie pages' combined `September, 8th 2026` layout. When a movie page
 omits a visible title, the adapter derives it from the official `/movies/`
 slug and uses the page's `Summary` section for metadata.
+
+The Academy Museum adapter traverses the official calendar's `Screenings`
+program-type filter, follows pagination/load-more calendar links, and then
+opens each linked program detail page for the exact date/time, format, artwork,
+and ticket link. If the calendar is client-rendered, it falls back to the
+official Screenings & Series index and current series pages. It accepts only
+detail pages explicitly labelled `Screenings` or `Screening from Series`, so
+conversations, book signings, special events, exhibitions, and related-event
+links are excluded. The Academy Museum source is optional for feed health, so
+a temporary museum-site outage does not erase the other official listings.
 
 Manual refreshes recheck the schedule/index pages while reusing detail pages
 that are still inside the cache window, so a user-triggered update does not

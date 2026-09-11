@@ -52,5 +52,18 @@
     "eventCount": 0,
     "pagesChecked": 0,
     "errors": []
+  },
+  {
+    "id": "academy-museum",
+    "name": "Academy Museum of Motion Pictures",
+    "city": "los-angeles",
+    "url": "https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O",
+    "adapter": "academy_museum",
+    "required": false,
+    "lastChecked": "2026-09-07T00:00:00Z",
+    "status": "seed",
+    "eventCount": 0,
+    "pagesChecked": 0,
+    "errors": []
   }
 ]

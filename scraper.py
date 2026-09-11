@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import gzip
+import json
 import os
 import re
 import threading
@@ -127,6 +128,10 @@ VISTA_SESSIONS_URL = "https://ticketing.uswest.veezi.com/sessions/?siteToken=20x
 VIDIOTS_HOME_URL = "https://vidiotsfoundation.org/"
 VIDIOTS_URL = "https://vidiotsfoundation.org/coming-soon/"
 VIDIOTS_PARTNER_URL = "https://la.teentix.org/venues/vidiots/"
+ACADEMY_CALENDAR_URL = "https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O"
+ACADEMY_FILMS_URL = "https://www.academymuseum.org/en/films?qr=theater"
+ACADEMY_HOSTS = {"academymuseum.org", "www.academymuseum.org", "v2.academymuseum.org"}
+ACADEMY_SCREENING_TYPE_ID = "16i3uOYQwism7sMDhIQr2O"
 
 SOURCE_REGISTRY = {
     "american-cinematheque": {
@@ -159,6 +164,13 @@ SOURCE_REGISTRY = {
         "scheduleUrl": VIDIOTS_URL,
         "partnerUrl": VIDIOTS_PARTNER_URL,
         "adapter": "vidiots",
+        "required": False,
+    },
+    "academy-museum": {
+        "name": "Academy Museum of Motion Pictures",
+        "city": "los-angeles",
+        "url": ACADEMY_CALENDAR_URL,
+        "adapter": "academy_museum",
         "required": False,
     },
 }
@@ -235,6 +247,11 @@ VENUE_CATALOG = {
         "name": "Vidiots",
         "neighborhood": "Eagle Rock",
         "address": "4884 Eagle Rock Blvd, Los Angeles, CA 90041",
+    },
+    "academy museum": {
+        "name": "Academy Museum of Motion Pictures",
+        "neighborhood": "Mid-Wilshire",
+        "address": "6067 Wilshire Boulevard, Los Angeles, CA 90036",
     },
 }
 
@@ -512,6 +529,349 @@ class PageParser(HTMLParser):
     @property
     def lines(self) -> list[str]:
         return [line for line in (normalize_space(part) for part in "".join(self._text).splitlines()) if line]
+
+
+class ScriptParser(HTMLParser):
+    """Collect script payloads used by JavaScript-rendered calendars."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._active = False
+        self._parts: list[str] = []
+        self.scripts: list[dict[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "script":
+            return
+        attrs_map = {key.lower(): value or "" for key, value in attrs}
+        self._active = True
+        self._parts = []
+        self._script_type = attrs_map.get("type", "").lower()
+        self._script_id = attrs_map.get("id", "")
+
+    def handle_data(self, data: str) -> None:
+        if self._active:
+            self._parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "script" and self._active:
+            self.scripts.append({
+                "type": self._script_type,
+                "id": self._script_id,
+                "text": "".join(self._parts),
+            })
+            self._active = False
+            self._parts = []
+
+
+def parse_scripts(html: str) -> list[dict[str, str]]:
+    parser = ScriptParser()
+    parser.feed(html)
+    parser.close()
+    return parser.scripts
+
+
+def academy_json_documents(html: str) -> list[object]:
+    """Read JSON-LD/Next/Contentful payloads without depending on a CMS SDK."""
+
+    documents: list[object] = []
+    decoder = json.JSONDecoder()
+    for script in parse_scripts(html):
+        text = script.get("text", "").strip().lstrip("\ufeff")
+        if not text:
+            continue
+        candidates = [text]
+        if not (text.startswith("{") or text.startswith("[")):
+            candidates = []
+            for match in re.finditer(r"[\[{]", text):
+                try:
+                    value, _ = decoder.raw_decode(text[match.start() :])
+                except json.JSONDecodeError:
+                    continue
+                candidates.append(json.dumps(value, ensure_ascii=False))
+                if len(candidates) >= 12:
+                    break
+        for candidate in candidates:
+            try:
+                value = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, (dict, list)):
+                documents.append(value)
+    return documents
+
+
+def walk_json(value: object) -> Iterable[dict]:
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from walk_json(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from walk_json(child)
+
+
+ACADEMY_ISO_DATETIME_RE = re.compile(
+    r"20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?"
+)
+ACADEMY_TEXT_DATE_RE = re.compile(
+    rf"\b(?:{DAY_NAMES})\.?[,]?\s+(?P<month>{MONTH_PATTERN_SHORT})\.?\s+(?P<day>\d{{1,2}})(?:st|nd|rd|th)?[,]?\s+(?P<year>20\d{{2}})\b",
+    re.I,
+)
+ACADEMY_DATE_ONLY_RE = re.compile(
+    rf"\b(?P<month>{MONTH_PATTERN_SHORT})\.?\s+(?P<day>\d{{1,2}})(?:st|nd|rd|th)?[,]?\s+(?P<year>20\d{{2}})\b",
+    re.I,
+)
+ACADEMY_ISO_DATE_ONLY_RE = re.compile(r"20\d{2}-\d{2}-\d{2}")
+
+
+def parse_academy_iso_datetime(value: object) -> datetime | None:
+    text = normalize_space(value)
+    if not text or not ACADEMY_ISO_DATETIME_RE.search(text):
+        return None
+    candidate = ACADEMY_ISO_DATETIME_RE.search(text).group(0)
+    try:
+        parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=LA_TZ) if parsed.tzinfo is None else parsed.astimezone(LA_TZ)
+
+
+def parse_academy_text_datetime(value: str) -> datetime | None:
+    date_match = ACADEMY_TEXT_DATE_RE.search(value) or ACADEMY_DATE_ONLY_RE.search(value)
+    time_match = TIME_RE.search(value)
+    if not date_match or not time_match:
+        return None
+    date_values = date_match.groupdict()
+    try:
+        hour, minute = parse_time(time_match.group("hour"), time_match.group("minute"), time_match.group("meridiem"))
+        return datetime(
+            int(date_values["year"]),
+            MONTHS[date_values["month"].lower()[:3]],
+            int(date_values["day"]),
+            hour,
+            minute,
+            tzinfo=LA_TZ,
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def academy_date_parts(value: object) -> tuple[int, int, int] | None:
+    text = normalize_space(value)
+    match = ACADEMY_DATE_ONLY_RE.search(text)
+    if match:
+        values = match.groupdict()
+        try:
+            return int(values["year"]), MONTHS[values["month"].lower()[:3]], int(values["day"])
+        except (KeyError, TypeError, ValueError):
+            return None
+    match = ACADEMY_ISO_DATE_ONLY_RE.search(text)
+    if match:
+        try:
+            parsed = datetime.fromisoformat(match.group(0))
+            return parsed.year, parsed.month, parsed.day
+        except ValueError:
+            return None
+    return None
+
+
+def academy_datetime_candidates(html: str, parser: PageParser, now: datetime) -> list[datetime]:
+    current = as_la(now)
+    candidates: list[datetime] = []
+    for document in academy_json_documents(html):
+        for record in walk_json(document):
+            for key, value in record.items():
+                key_name = normalize_key(key)
+                if any(marker in key_name for marker in ("created", "updated", "published", "modified")):
+                    continue
+                if not any(marker in key_name for marker in ("start", "date", "time", "datetime")):
+                    continue
+                if isinstance(value, str):
+                    parsed = parse_academy_iso_datetime(value)
+                    if parsed:
+                        candidates.append(parsed)
+            date_values = [
+                value for key, value in record.items()
+                if isinstance(value, str)
+                and "date" in normalize_key(key)
+                and ("start" in normalize_key(key) or normalize_key(key) in {"date", "event date"})
+                and not any(marker in normalize_key(key) for marker in ("created", "updated", "published", "modified"))
+            ]
+            time_values = [
+                value for key, value in record.items()
+                if isinstance(value, str)
+                and "time" in normalize_key(key)
+                and ("start" in normalize_key(key) or normalize_key(key) == "time")
+                and not any(marker in normalize_key(key) for marker in ("created", "updated", "published", "modified"))
+            ]
+            for date_value in date_values:
+                date_parts = academy_date_parts(date_value)
+                if not date_parts:
+                    continue
+                for time_value in time_values:
+                    time_match = TIME_RE.search(time_value) or re.search(r"\b(\d{1,2}):(\d{2})\b", time_value)
+                    if not time_match:
+                        continue
+                    try:
+                        if time_match.groupdict():
+                            hour, minute = parse_time(time_match.group("hour"), time_match.group("minute"), time_match.group("meridiem"))
+                        else:
+                            hour, minute = int(time_match.group(1)), int(time_match.group(2))
+                        year, month, day = date_parts
+                        candidates.append(datetime(
+                            year, month, day,
+                            hour, minute, tzinfo=LA_TZ,
+                        ))
+                    except (AttributeError, KeyError, TypeError, ValueError):
+                        continue
+    candidates.extend(
+        parsed for parsed in (parse_academy_text_datetime(line) for line in parser.lines) if parsed
+    )
+    unique: dict[str, datetime] = {}
+    for candidate in candidates:
+        local = as_la(candidate)
+        if local >= current:
+            unique[local.isoformat()] = local
+    return sorted(unique.values())
+
+
+def academy_labelled_screening(html: str) -> bool:
+    parser = parse_html(html)
+    labels = {normalize_key(line).rstrip(":") for line in parser.lines}
+    return "screenings" in labels or "screening from series" in labels
+
+
+def discover_academy_event_urls(html: str, base_url: str = ACADEMY_CALENDAR_URL) -> list[str]:
+    """Find Academy detail pages from HTML links and embedded CMS payloads."""
+
+    parser = parse_html(html)
+    candidates = [urljoin(base_url, link.get("href", "")) for link in parser.links]
+    embedded_html = html.replace("\\/", "/")
+    candidates.extend(
+        urljoin(base_url, match.group(0))
+        for match in re.finditer(r"(?:https?://[^\"'<> ]+)?/programs/detail/[A-Za-z0-9%._~:/?#\[\]@!$&'()*+,;=-]+", embedded_html)
+    )
+    urls: list[str] = []
+    for candidate in candidates:
+        candidate = candidate.rstrip(".,);]}")
+        parsed = urlsplit(candidate.split("#", 1)[0])
+        if parsed.scheme != "https" or parsed.netloc.lower() not in ACADEMY_HOSTS:
+            continue
+        if not parsed.path.rstrip("/").startswith("/programs/detail/"):
+            continue
+        normalized = urlunsplit(("https", parsed.netloc.lower(), parsed.path.rstrip("/") + "/", "", ""))
+        if normalized not in urls:
+            urls.append(normalized)
+    return urls
+
+
+def discover_academy_traversal_urls(html: str, base_url: str = ACADEMY_CALENDAR_URL) -> list[str]:
+    """Find same-site calendar pages used by pagination or load-more controls."""
+
+    parser = parse_html(html)
+    candidates = [urljoin(base_url, link.get("href", "")) for link in parser.links]
+    candidates.extend(
+        urljoin(base_url, match.group(0))
+        for match in re.finditer(r"(?:https?://[^\"'<> ]+)?/[^\"'<> ]*calendar[^\"'<> ]*", html, re.I)
+    )
+    urls: list[str] = []
+    for candidate in candidates:
+        parsed = urlsplit(candidate.split("#", 1)[0])
+        query = normalize_key(parsed.query)
+        if parsed.scheme != "https" or parsed.netloc.lower() not in ACADEMY_HOSTS:
+            continue
+        if parsed.path.rstrip("/").casefold() not in {"/calendar", "/en/calendar"}:
+            continue
+        if "programtypes" not in query and not re.search(r"(?:^|&)(?:page|offset|start|cursor|loadmore)=", query):
+            continue
+        normalized = urlunsplit(("https", parsed.netloc.lower(), parsed.path.rstrip("/") or "/", parsed.query, ""))
+        if normalized != base_url and normalized not in urls:
+            urls.append(normalized)
+    return urls
+
+
+def discover_academy_series_urls(html: str, base_url: str = ACADEMY_FILMS_URL) -> list[str]:
+    parser = parse_html(html)
+    urls: list[str] = []
+    for link in parser.links:
+        candidate = urljoin(base_url, link.get("href", "")).split("#", 1)[0]
+        parsed = urlsplit(candidate)
+        if parsed.scheme != "https" or parsed.netloc.lower() not in ACADEMY_HOSTS:
+            continue
+        if not parsed.path.rstrip("/").startswith(("/programs/series/", "/en/programs/series/")):
+            continue
+        if candidate not in urls:
+            urls.append(candidate)
+    return urls
+
+
+def academy_value(document: object, keys: tuple[str, ...]) -> str:
+    wanted = {normalize_key(key) for key in keys}
+    for record in walk_json(document):
+        for key, value in record.items():
+            if normalize_key(key) in wanted and isinstance(value, (str, int, float)):
+                text = normalize_space(value)
+                if text:
+                    return text
+    return ""
+
+
+def parse_academy_event(html: str, page_url: str, now: datetime | None = None) -> dict | None:
+    """Parse one Academy detail page, accepting only explicitly labelled screenings."""
+
+    current = as_la(now)
+    if not urlsplit(page_url).path.rstrip("/").startswith("/programs/detail/") or not academy_labelled_screening(html):
+        return None
+    parser = parse_html(html)
+    title = next(
+        (
+            heading["text"] for heading in parser.headings
+            if heading.get("tag") == "h1" and heading.get("text") and normalize_key(heading["text"]) != "#"
+        ),
+        "",
+    )
+    if not title:
+        title = normalize_space(parser.meta.get("og:title", "")).split("|", 1)[0]
+    if not title:
+        return None
+    dates = academy_datetime_candidates(html, parser, current)
+    if not dates:
+        return None
+    documents = academy_json_documents(html)
+    synopsis = academy_value(documents, ("description", "shortDescription", "summary", "synopsis"))
+    format_name = academy_value(documents, ("format", "presentationFormat", "filmFormat")) or next(
+        (line for line in parser.lines if re.search(r"\b(?:35mm|70mm|16mm|DCP|4K DCP|3D DCP)\b", line, re.I)),
+        "",
+    )
+    year = academy_value(documents, ("releaseYear", "year", "releaseDate"))
+    if not year:
+        year_match = re.search(r"\b((?:19|20)\d{2})\b", " ".join(parser.lines))
+        year = year_match.group(1) if year_match else ""
+    note_lines = []
+    for line in parser.lines:
+        lowered = normalize_key(line)
+        if any(marker in lowered for marker in ("in person", "selected by", "accessible screening", "premiere")):
+            note_lines.append(line)
+    notes = " · ".join(dict.fromkeys(note_lines))[:220]
+    image = (absolute_images(parser, page_url) or [""])[0]
+    return make_event(
+        source_id="academy-museum",
+        source_name="Academy Museum of Motion Pictures",
+        title=title,
+        start_at=dates[0],
+        now=current,
+        page_url=page_url,
+        ticket_url=pick_ticket_url(parser, page_url),
+        venue="Academy Museum of Motion Pictures",
+        year=year,
+        format_name=format_name,
+        synopsis=synopsis,
+        notes=notes,
+        image=image,
+        source_page_url=ACADEMY_CALENDAR_URL,
+        detail_status="verified-academy-calendar",
+    )
 
 
 class CachedFetcher:
@@ -2394,6 +2754,96 @@ def _scrape_american_cinematheque(current: datetime, fetcher: CachedFetcher, for
     return {"events": events, "source": source, "errors": errors[:5]}
 
 
+def _scrape_academy_museum(current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
+    """Traverse the Academy calendar and retain only Screening-labelled events."""
+
+    started = time.monotonic()
+    checked_at = iso_utc()
+    errors: list[str] = []
+    warnings: list[str] = []
+    event_urls: list[str] = []
+    calendar_queue = [ACADEMY_CALENDAR_URL]
+    seen_calendar: set[str] = set()
+    pages_checked = 0
+
+    # The programTypes query is the official site's Screening filter. Follow
+    # its pagination/load-more links so the source is not limited to the first
+    # visible batch of cards.
+    while calendar_queue and len(seen_calendar) < 40:
+        page_url = calendar_queue.pop(0)
+        if page_url in seen_calendar:
+            continue
+        seen_calendar.add(page_url)
+        try:
+            html, checked_at, _ = fetcher.fetch(page_url, force=force)
+        except Exception as error:
+            errors.append(f"{page_url}: {error}")
+            continue
+        pages_checked += 1
+        event_urls.extend(discover_academy_event_urls(html, page_url))
+        for traversal_url in discover_academy_traversal_urls(html, page_url):
+            if traversal_url not in seen_calendar and traversal_url not in calendar_queue:
+                calendar_queue.append(traversal_url)
+
+    # The calendar is client-rendered on some deployments. Its public Films
+    # index and current series pages expose the same Screening detail graph;
+    # use them only when the filtered calendar yielded no detail URLs.
+    if not event_urls:
+        try:
+            films_html, films_checked_at, _ = fetcher.fetch(ACADEMY_FILMS_URL, force=force)
+            checked_at = films_checked_at or checked_at
+            pages_checked += 1
+            series_urls = discover_academy_series_urls(films_html, ACADEMY_FILMS_URL)
+            series_results = parallel_fetch(fetcher, series_urls, force=force, max_workers=8)
+            pages_checked += len(series_urls)
+            for series_url in series_urls:
+                result = series_results.get(series_url)
+                if isinstance(result, Exception) or not result:
+                    if isinstance(result, Exception):
+                        warnings.append(f"{series_url}: {result}")
+                    continue
+                series_html, series_checked_at, _ = result
+                checked_at = series_checked_at or checked_at
+                event_urls.extend(discover_academy_event_urls(series_html, series_url))
+        except Exception as error:
+            errors.append(f"{ACADEMY_FILMS_URL}: {error}")
+
+    unique_event_urls = list(dict.fromkeys(event_urls))[:DEFAULT_MAX_AC_EVENTS]
+    detail_results = parallel_fetch(fetcher, unique_event_urls, force=force, max_workers=16)
+    events: list[dict] = []
+    for page_url in unique_event_urls:
+        result = detail_results.get(page_url)
+        if isinstance(result, Exception):
+            warnings.append(f"{page_url}: {result}")
+            continue
+        if not result:
+            continue
+        html, page_checked_at, _ = result
+        event = parse_academy_event(html, page_url, current)
+        if event:
+            event["sourceLastChecked"] = page_checked_at or checked_at
+            events.append(event)
+        elif academy_labelled_screening(html):
+            warnings.append(f"{page_url}: Screening page had no future date/time")
+
+    events = deduplicate_events(events)
+    source = {
+        "id": "academy-museum",
+        "name": "Academy Museum of Motion Pictures",
+        "city": "los-angeles",
+        "url": ACADEMY_CALENDAR_URL,
+        "adapter": "academy_museum",
+        "lastChecked": checked_at,
+        "status": "verified" if events and not errors else ("degraded" if events else "error"),
+        "eventCount": len(events),
+        "pagesChecked": pages_checked + len(unique_event_urls),
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "errors": errors[:5],
+        "warnings": warnings[:5],
+    }
+    return {"events": events, "source": source, "errors": errors[:5]}
+
+
 def _scrape_new_beverly(current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
     """Index New Beverly from Veezi and optionally enrich with venue pages.
 
@@ -2797,6 +3247,7 @@ def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | Non
         "new-beverly": _scrape_new_beverly,
         "vista-theater": _scrape_vista,
         "vidiots": _scrape_vidiots,
+        "academy-museum": _scrape_academy_museum,
     }
     results: dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="rerun-source") as executor:
@@ -2813,6 +3264,7 @@ def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | Non
                     "new-beverly": "New Beverly Cinema",
                     "vista-theater": "Vista Theater Hollywood",
                     "vidiots": "Vidiots",
+                    "academy-museum": "Academy Museum of Motion Pictures",
                 }[source_id]
                 results[source_id] = {
                     "events": [],

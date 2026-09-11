@@ -46,5 +46,13 @@
     "neighborhood": "Eagle Rock",
     "address": "4884 Eagle Rock Blvd, Los Angeles, CA 90041",
     "source": "Vidiots official coming-soon page"
+  },
+  {
+    "id": "academy-museum-of-motion-pictures",
+    "name": "Academy Museum of Motion Pictures",
+    "city": "los-angeles",
+    "neighborhood": "Mid-Wilshire",
+    "address": "6067 Wilshire Boulevard, Los Angeles, CA 90036",
+    "source": "Academy Museum official calendar"
   }
 ]

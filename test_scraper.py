@@ -196,6 +196,30 @@ VIDIOTS_PARTNER_HTML = """
 </html>
 """
 
+ACADEMY_CALENDAR_HTML = """
+<html><body>
+<a href="/programs/detail/far-from-heaven-019fce4c-example">Far from Heaven</a>
+<a href="/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O&page=2">Next</a>
+</body></html>
+"""
+
+ACADEMY_DETAIL_HTML = """
+<html><head>
+<meta property="og:image" content="https://assets.example/far-from-heaven.jpg">
+<script type="application/json">{"startDate":"2026-09-23T19:30:00-07:00","releaseYear":"2002","format":"35mm","description":"A lush drama.","programType":"Screenings"}</script>
+</head><body>
+<h1>Far from Heaven in 35mm</h1>
+<p>Screening from Series</p><p>Wed, Sep 23, 2026</p>
+<p>In person: producer Brad Simpson</p><p>35mm</p>
+<a href="https://tickets.example/far-from-heaven">Buy Tickets</a>
+</body></html>
+"""
+
+ACADEMY_NON_SCREENING_HTML = """
+<html><h1>Monster Mash</h1><p>Special Events</p>
+<p>Sat, Sep 26, 2026</p><p>A family day at the museum.</p></html>
+"""
+
 
 class FakeFetcher:
     network_requests = 0
@@ -212,6 +236,47 @@ class FakeFetcher:
 
 
 class ScraperTests(unittest.TestCase):
+    def test_academy_discovery_follows_filtered_calendar_pagination(self):
+        self.assertEqual(
+            scraper.discover_academy_event_urls(ACADEMY_CALENDAR_HTML),
+            ["https://www.academymuseum.org/programs/detail/far-from-heaven-019fce4c-example/"],
+        )
+        self.assertEqual(
+            scraper.discover_academy_traversal_urls(ACADEMY_CALENDAR_HTML),
+            ["https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O&page=2"],
+        )
+
+    def test_academy_parser_requires_screenings_label_and_reads_embedded_metadata(self):
+        event = scraper.parse_academy_event(
+            ACADEMY_DETAIL_HTML,
+            "https://www.academymuseum.org/programs/detail/far-from-heaven-019fce4c-example/",
+            NOW,
+        )
+        self.assertIsNotNone(event)
+        self.assertEqual(event["venue"], "Academy Museum of Motion Pictures")
+        self.assertEqual(event["startAt"], "2026-09-23T19:30:00-07:00")
+        self.assertEqual(event["format"], "35mm")
+        self.assertEqual(event["sourceStatus"], "verified-academy-calendar")
+        self.assertIsNone(
+            scraper.parse_academy_event(
+                ACADEMY_NON_SCREENING_HTML,
+                "https://www.academymuseum.org/programs/detail/monster-mash-example/",
+                NOW,
+            )
+        )
+
+    def test_academy_scraper_traverses_calendar_and_detail_pages(self):
+        calendar_page_2 = '<a href="/programs/detail/second-screening-019f-example">Second Screening</a>'
+        pages = {
+            scraper.ACADEMY_CALENDAR_URL: ACADEMY_CALENDAR_HTML,
+            "https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O&page=2": calendar_page_2,
+            "https://www.academymuseum.org/programs/detail/far-from-heaven-019fce4c-example/": ACADEMY_DETAIL_HTML,
+            "https://www.academymuseum.org/programs/detail/second-screening-019f-example/": ACADEMY_DETAIL_HTML.replace("Far from Heaven", "Second Screening"),
+        }
+        result = scraper._scrape_academy_museum(NOW, FakeFetcher(pages), force=True)
+        self.assertEqual(result["source"]["status"], "verified")
+        self.assertEqual(len(result["events"]), 2)
+
     def test_cached_fetcher_retries_transient_http_failure(self):
         class Response:
             headers = {}
