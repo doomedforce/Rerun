@@ -676,58 +676,128 @@ def academy_date_parts(value: object) -> tuple[int, int, int] | None:
     return None
 
 
-def academy_datetime_candidates(html: str, parser: PageParser, now: datetime) -> list[datetime]:
-    current = as_la(now)
+def _academy_compact_key(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "", normalize_key(value))
+
+
+def _academy_record_title_match(record: dict, title: str) -> bool:
+    wanted = screening_title_key(title)
+    if not wanted:
+        return False
+    for key, value in record.items():
+        if _academy_compact_key(key) in {"title", "name", "eventname", "programtitle", "filmtitle"}:
+            if wanted == screening_title_key(value) or wanted in screening_title_key(value):
+                return True
+    return False
+
+
+def _academy_record_datetime(record: dict) -> datetime | None:
+    """Extract one record's primary start, never an end or related date."""
+
+    values: dict[str, object] = {
+        _academy_compact_key(key): value
+        for key, value in record.items()
+        if isinstance(value, (str, int, float))
+    }
+    ignored = ("created", "updated", "published", "modified", "end", "finish")
+
+    # Prefer full start datetime fields.  This prevents a record with both
+    # startDate and endDate from generating four cross-product combinations.
+    full_keys = (
+        "startdatetime", "startat", "startsat", "startdate", "eventstart",
+        "eventstartdate", "eventstartdatetime", "eventdate", "datetime", "dateandtime",
+    )
+    for key in full_keys:
+        value = values.get(key)
+        if value is not None and not any(marker in key for marker in ignored):
+            parsed = parse_academy_iso_datetime(value)
+            if parsed:
+                return parsed
+
+    date_keys = (
+        "startdate", "eventdate", "date", "screeningdate", "showdate",
+    )
+    time_keys = ("starttime", "time", "screeningtime", "showtime")
+    date_value = next((values[key] for key in date_keys if key in values), None)
+    time_value = next((values[key] for key in time_keys if key in values), None)
+    date_parts = academy_date_parts(date_value) if date_value is not None else None
+    if date_parts and time_value is not None:
+        time_match = TIME_RE.search(normalize_space(time_value)) or re.search(
+            r"\b(\d{1,2}):(\d{2})\b", normalize_space(time_value)
+        )
+        if time_match:
+            try:
+                if time_match.groupdict():
+                    hour, minute = parse_time(
+                        time_match.group("hour"), time_match.group("minute"), time_match.group("meridiem")
+                    )
+                else:
+                    hour, minute = int(time_match.group(1)), int(time_match.group(2))
+                year, month, day = date_parts
+                return datetime(year, month, day, hour, minute, tzinfo=LA_TZ)
+            except (AttributeError, KeyError, TypeError, ValueError):
+                pass
+    return None
+
+
+def _academy_visible_datetime_candidates(parser: PageParser) -> list[datetime]:
     candidates: list[datetime] = []
+    for index, line in enumerate(parser.lines):
+        parsed = parse_academy_text_datetime(line)
+        if parsed:
+            candidates.append(parsed)
+            continue
+        date_parts = academy_date_parts(line)
+        if not date_parts:
+            continue
+        # The Academy often renders the date and time as adjacent text nodes.
+        # Keep the window tight so a related event cannot supply this event's
+        # time accidentally.
+        for nearby in parser.lines[index + 1:index + 4]:
+            time_match = TIME_RE.search(nearby) or re.search(r"\b(\d{1,2}):(\d{2})\b", nearby)
+            if not time_match:
+                continue
+            try:
+                if time_match.groupdict():
+                    hour, minute = parse_time(
+                        time_match.group("hour"), time_match.group("minute"), time_match.group("meridiem")
+                    )
+                else:
+                    hour, minute = int(time_match.group(1)), int(time_match.group(2))
+                year, month, day = date_parts
+                candidates.append(datetime(year, month, day, hour, minute, tzinfo=LA_TZ))
+            except (AttributeError, KeyError, TypeError, ValueError):
+                pass
+            break
+    return candidates
+
+
+def academy_datetime_candidates(
+    html: str,
+    parser: PageParser,
+    now: datetime,
+    title: str = "",
+) -> list[datetime]:
+    """Return dates for the detail page's own event, not its related events."""
+
+    current = as_la(now)
+    matched_records: list[datetime] = []
+    start_records: list[datetime] = []
     for document in academy_json_documents(html):
         for record in walk_json(document):
-            for key, value in record.items():
-                key_name = normalize_key(key)
-                if any(marker in key_name for marker in ("created", "updated", "published", "modified")):
-                    continue
-                if not any(marker in key_name for marker in ("start", "date", "time", "datetime")):
-                    continue
-                if isinstance(value, str):
-                    parsed = parse_academy_iso_datetime(value)
-                    if parsed:
-                        candidates.append(parsed)
-            date_values = [
-                value for key, value in record.items()
-                if isinstance(value, str)
-                and "date" in normalize_key(key)
-                and ("start" in normalize_key(key) or normalize_key(key) in {"date", "event date"})
-                and not any(marker in normalize_key(key) for marker in ("created", "updated", "published", "modified"))
-            ]
-            time_values = [
-                value for key, value in record.items()
-                if isinstance(value, str)
-                and "time" in normalize_key(key)
-                and ("start" in normalize_key(key) or normalize_key(key) == "time")
-                and not any(marker in normalize_key(key) for marker in ("created", "updated", "published", "modified"))
-            ]
-            for date_value in date_values:
-                date_parts = academy_date_parts(date_value)
-                if not date_parts:
-                    continue
-                for time_value in time_values:
-                    time_match = TIME_RE.search(time_value) or re.search(r"\b(\d{1,2}):(\d{2})\b", time_value)
-                    if not time_match:
-                        continue
-                    try:
-                        if time_match.groupdict():
-                            hour, minute = parse_time(time_match.group("hour"), time_match.group("minute"), time_match.group("meridiem"))
-                        else:
-                            hour, minute = int(time_match.group(1)), int(time_match.group(2))
-                        year, month, day = date_parts
-                        candidates.append(datetime(
-                            year, month, day,
-                            hour, minute, tzinfo=LA_TZ,
-                        ))
-                    except (AttributeError, KeyError, TypeError, ValueError):
-                        continue
-    candidates.extend(
-        parsed for parsed in (parse_academy_text_datetime(line) for line in parser.lines) if parsed
-    )
+            parsed = _academy_record_datetime(record)
+            if not parsed:
+                continue
+            start_records.append(parsed)
+            if _academy_record_title_match(record, title):
+                matched_records.append(parsed)
+
+    # A record carrying this page's title is the strongest signal. Otherwise,
+    # use the first primary start record in document order, which is how the
+    # Academy payload presents the current event before related events.
+    candidates = matched_records or start_records[:1]
+    if not candidates:
+        candidates = _academy_visible_datetime_candidates(parser)
     unique: dict[str, datetime] = {}
     for candidate in candidates:
         local = as_la(candidate)
@@ -835,7 +905,7 @@ def parse_academy_event(html: str, page_url: str, now: datetime | None = None) -
         title = normalize_space(parser.meta.get("og:title", "")).split("|", 1)[0]
     if not title:
         return None
-    dates = academy_datetime_candidates(html, parser, current)
+    dates = academy_datetime_candidates(html, parser, current, title=title)
     if not dates:
         return None
     documents = academy_json_documents(html)

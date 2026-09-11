@@ -206,7 +206,7 @@ ACADEMY_CALENDAR_HTML = """
 ACADEMY_DETAIL_HTML = """
 <html><head>
 <meta property="og:image" content="https://assets.example/far-from-heaven.jpg">
-<script type="application/json">{"startDate":"2026-09-23T19:30:00-07:00","releaseYear":"2002","format":"35mm","description":"A lush drama.","programType":"Screenings"}</script>
+<script type="application/json">{"name":"Far from Heaven in 35mm","startDate":"2026-09-23T19:30:00-07:00","endDate":"2026-09-24T19:30:00-07:00","releaseYear":"2002","format":"35mm","description":"A lush drama.","programType":"Screenings","relatedEvents":[{"name":"Related Screening","startDate":"2026-09-15T19:30:00-07:00"}]}</script>
 </head><body>
 <h1>Far from Heaven in 35mm</h1>
 <p>Screening from Series</p><p>Wed, Sep 23, 2026</p>
