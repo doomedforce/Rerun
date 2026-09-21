@@ -220,6 +220,35 @@ ACADEMY_NON_SCREENING_HTML = """
 <p>Sat, Sep 26, 2026</p><p>A family day at the museum.</p></html>
 """
 
+FINE_ARTS_HTML = """
+<html><h2>Fine Arts Theatre Beverly Hills</h2>
+<h3>Wednesday 23, September</h3><h3>Citizen Kane</h3>
+<h4>Wednesday 23, September</h4><a href="/ticket/1">7:30 PM</a></html>
+"""
+
+FILMFORUM_HTML = """
+<html><h2><a href="/events/rare-film-2026-09-27/">Rare Film</a></h2>
+<p>Date: Sep 27, 2026 7:30PM</p><p>Location: 2220 Arts + Archives</p>
+<p>A rare theatrical screening.</p>
+<a href="/events/rare-film-2026-09-27/">Details</a>
+<a href="https://tickets.example/rare-film">Buy Tickets</a></html>
+"""
+
+OLD_TOWN_HTML = """
+<html><head><meta property="og:image" content="https://indy-systems.imgix.net/gold-rush.jpg">
+<script type="application/ld+json">{"description":"A classic silent film.","date":"2026-10-24"}</script></head>
+<body><h1>The Gold Rush</h1><p>1925 - Silent</p>
+<p>Live Accompaniment by Robert York on the Mighty Wurlitzer</p>
+<a href="/showtimes/gold-rush-1">October 24, 2:30 pm</a></body></html>
+"""
+
+UCLA_HTML = """
+<html><head><meta property="og:image" content="https://cinema.ucla.edu/dandridge.jpg"></head>
+<body><h1>Introducing Dorothy Dandridge</h1><p>Screening 1 of 3</p>
+<p>Dec 2, 2026</p><p>7:00 pm</p><p>Billy Wilder Theater</p>
+<p>Year</p><p>1999</p><p>Digital</p></body></html>
+"""
+
 
 class FakeFetcher:
     network_requests = 0
@@ -241,6 +270,11 @@ class ScraperTests(unittest.TestCase):
             scraper.discover_academy_event_urls(ACADEMY_CALENDAR_HTML),
             ["https://www.academymuseum.org/programs/detail/far-from-heaven-019fce4c-example/"],
         )
+        localized = '<a href="/en/programs/detail/the-beguiled-019fc-example">The Beguiled</a>'
+        self.assertEqual(
+            scraper.discover_academy_event_urls(localized),
+            ["https://www.academymuseum.org/en/programs/detail/the-beguiled-019fc-example/"],
+        )
         self.assertEqual(
             scraper.discover_academy_traversal_urls(ACADEMY_CALENDAR_HTML),
             ["https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O&page=2"],
@@ -257,6 +291,13 @@ class ScraperTests(unittest.TestCase):
         self.assertEqual(event["startAt"], "2026-09-23T19:30:00-07:00")
         self.assertEqual(event["format"], "35mm")
         self.assertEqual(event["sourceStatus"], "verified-academy-calendar")
+        localized_event = scraper.parse_academy_event(
+            ACADEMY_DETAIL_HTML,
+            "https://www.academymuseum.org/en/programs/detail/far-from-heaven-019fce4c-example/",
+            NOW,
+        )
+        self.assertIsNotNone(localized_event)
+        self.assertEqual(localized_event["startAt"], "2026-09-23T19:30:00-07:00")
         self.assertIsNone(
             scraper.parse_academy_event(
                 ACADEMY_NON_SCREENING_HTML,
@@ -276,6 +317,39 @@ class ScraperTests(unittest.TestCase):
         result = scraper._scrape_academy_museum(NOW, FakeFetcher(pages), force=True)
         self.assertEqual(result["source"]["status"], "verified")
         self.assertEqual(len(result["events"]), 2)
+
+    def test_additional_repertory_sources_parse_official_shapes(self):
+        fine_arts = scraper.parse_fine_arts_sessions(FINE_ARTS_HTML, NOW)
+        self.assertEqual(fine_arts[0]["title"], "Citizen Kane")
+        self.assertEqual(fine_arts[0]["startAt"].isoformat(), "2026-09-23T19:30:00-07:00")
+
+        filmforum = scraper.discover_filmforum_entries(FILMFORUM_HTML)
+        self.assertEqual(filmforum[0]["title"], "Rare Film")
+        self.assertEqual(filmforum[0]["location"], "2220 Arts + Archives")
+        self.assertTrue(filmforum[0]["pageUrl"].endswith("/events/rare-film-2026-09-27/"))
+
+        old_town = scraper.parse_old_town_movie(
+            OLD_TOWN_HTML,
+            "https://www.oldtownmusichall.org/movie/the-gold-rush/",
+            NOW,
+        )
+        self.assertEqual(old_town["title"], "The Gold Rush")
+        self.assertEqual(old_town["year"], "1925")
+        self.assertEqual(old_town["showtimes"][0]["startAt"].isoformat(), "2026-10-24T14:30:00-07:00")
+
+        ucla = scraper.parse_ucla_event(
+            UCLA_HTML,
+            "https://www.cinema.ucla.edu/events/introducing-dorothy-dandridge-2026-12-02/",
+            NOW,
+        )
+        self.assertIsNotNone(ucla)
+        self.assertEqual(ucla["venue"], "Billy Wilder Theater")
+        self.assertEqual(ucla["startAt"], "2026-12-02T19:00:00-08:00")
+
+    def test_new_sources_are_optional_and_registered(self):
+        for source_id in ("fine-arts-theatre", "filmforum", "old-town-music-hall", "ucla-film-archive"):
+            self.assertIn(source_id, scraper.SOURCE_REGISTRY)
+            self.assertFalse(scraper.SOURCE_REGISTRY[source_id].get("required", True))
 
     def test_cached_fetcher_retries_transient_http_failure(self):
         class Response:

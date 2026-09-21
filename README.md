@@ -40,6 +40,10 @@ current Los Angeles sources are:
 - [Vista Theater Hollywood Veezi sessions](https://ticketing.uswest.veezi.com/sessions/?siteToken=20xhpa3yt2hhkwt4zjvfcwsaww)
 - [Vidiots](https://vidiotsfoundation.org/) / [Coming Soon](https://vidiotsfoundation.org/coming-soon/)
 - [Academy Museum calendar — Screenings filter](https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O)
+- [Fine Arts Theatre Beverly Hills Veezi sessions](https://ticketing.uswest.veezi.com/sessions/?siteToken=tez3prscsvfbagchhkxbevjwk8)
+- [Los Angeles Filmforum schedule](https://www.lafilmforum.org/schedule/)
+- [Old Town Music Hall](https://www.oldtownmusichall.org/home/)
+- [UCLA Film & Television Archive events](https://www.cinema.ucla.edu/events/)
 
 Vidiots is traversed from its official homepage into the current upcoming-listing
 pages and then into each linked movie page. Individual official movie pages are
@@ -113,6 +117,16 @@ detail pages explicitly labelled `Screenings` or `Screening from Series`, so
 conversations, book signings, special events, exhibitions, and related-event
 links are excluded. The Academy Museum source is optional for feed health, so
 a temporary museum-site outage does not erase the other official listings.
+
+Fine Arts Theatre Beverly Hills uses its official Veezi sessions feed, reusing
+the same canonical session parser as Vista and New Beverly. Filmforum is
+traversed from its official schedule into program detail pages. Old Town Music
+Hall is traversed from its official homepage into movie pages and their dated
+showtimes. UCLA Film & Television Archive traversal checks the official events
+and series indexes, with an official sitemap fallback for client-rendered event
+lists; only future pages with screening or film-program markers are retained.
+All four sources are optional so a source-specific outage cannot invalidate the
+complete feed from the existing required venues.
 
 Manual refreshes recheck the schedule/index pages while reusing detail pages
 that are still inside the cache window, so a user-triggered update does not

@@ -132,6 +132,13 @@ ACADEMY_CALENDAR_URL = "https://www.academymuseum.org/en/calendar?programTypes=1
 ACADEMY_FILMS_URL = "https://www.academymuseum.org/en/films?qr=theater"
 ACADEMY_HOSTS = {"academymuseum.org", "www.academymuseum.org", "v2.academymuseum.org"}
 ACADEMY_SCREENING_TYPE_ID = "16i3uOYQwism7sMDhIQr2O"
+ACADEMY_DETAIL_PATH_PREFIXES = ("/programs/detail/", "/en/programs/detail/")
+FINE_ARTS_SESSIONS_URL = "https://ticketing.uswest.veezi.com/sessions/?siteToken=tez3prscsvfbagchhkxbevjwk8"
+FILMFORUM_SCHEDULE_URL = "https://www.lafilmforum.org/schedule/"
+OLD_TOWN_HOME_URL = "https://www.oldtownmusichall.org/home/"
+UCLA_EVENTS_URL = "https://www.cinema.ucla.edu/events/"
+UCLA_SERIES_URL = "https://www.cinema.ucla.edu/series/"
+UCLA_SITEMAP_URL = "https://www.cinema.ucla.edu/sitemap.xml"
 
 SOURCE_REGISTRY = {
     "american-cinematheque": {
@@ -171,6 +178,34 @@ SOURCE_REGISTRY = {
         "city": "los-angeles",
         "url": ACADEMY_CALENDAR_URL,
         "adapter": "academy_museum",
+        "required": False,
+    },
+    "fine-arts-theatre": {
+        "name": "Fine Arts Theatre Beverly Hills",
+        "city": "los-angeles",
+        "url": FINE_ARTS_SESSIONS_URL,
+        "adapter": "fine_arts_theatre",
+        "required": False,
+    },
+    "filmforum": {
+        "name": "Los Angeles Filmforum",
+        "city": "los-angeles",
+        "url": FILMFORUM_SCHEDULE_URL,
+        "adapter": "filmforum",
+        "required": False,
+    },
+    "old-town-music-hall": {
+        "name": "Old Town Music Hall",
+        "city": "los-angeles",
+        "url": OLD_TOWN_HOME_URL,
+        "adapter": "old_town_music_hall",
+        "required": False,
+    },
+    "ucla-film-archive": {
+        "name": "UCLA Film & Television Archive",
+        "city": "los-angeles",
+        "url": UCLA_EVENTS_URL,
+        "adapter": "ucla_film_archive",
         "required": False,
     },
 }
@@ -252,6 +287,31 @@ VENUE_CATALOG = {
         "name": "Academy Museum of Motion Pictures",
         "neighborhood": "Mid-Wilshire",
         "address": "6067 Wilshire Boulevard, Los Angeles, CA 90036",
+    },
+    "fine arts theatre": {
+        "name": "Fine Arts Theatre Beverly Hills",
+        "neighborhood": "Beverly Hills",
+        "address": "8556 Wilshire Boulevard, Beverly Hills, CA 90211",
+    },
+    "fine arts theater": {
+        "name": "Fine Arts Theatre Beverly Hills",
+        "neighborhood": "Beverly Hills",
+        "address": "8556 Wilshire Boulevard, Beverly Hills, CA 90211",
+    },
+    "2220 arts + archives": {
+        "name": "2220 Arts + Archives",
+        "neighborhood": "Historic Filipinotown",
+        "address": "2220 Beverly Boulevard, Los Angeles, CA 90057",
+    },
+    "billy wilder theater": {
+        "name": "Billy Wilder Theater",
+        "neighborhood": "Westwood",
+        "address": "10899 Wilshire Boulevard, Los Angeles, CA 90024",
+    },
+    "old town music hall": {
+        "name": "Old Town Music Hall",
+        "neighborhood": "El Segundo",
+        "address": "140 Richmond Street, El Segundo, CA 90245",
     },
 }
 
@@ -820,7 +880,10 @@ def discover_academy_event_urls(html: str, base_url: str = ACADEMY_CALENDAR_URL)
     embedded_html = html.replace("\\/", "/")
     candidates.extend(
         urljoin(base_url, match.group(0))
-        for match in re.finditer(r"(?:https?://[^\"'<> ]+)?/programs/detail/[A-Za-z0-9%._~:/?#\[\]@!$&'()*+,;=-]+", embedded_html)
+        for match in re.finditer(
+            r"(?:https?://[^\"'<> ]+)?/(?:en/)?programs/detail/[A-Za-z0-9%._~:/?#\[\]@!$&'()*+,;=-]+",
+            embedded_html,
+        )
     )
     urls: list[str] = []
     for candidate in candidates:
@@ -828,7 +891,7 @@ def discover_academy_event_urls(html: str, base_url: str = ACADEMY_CALENDAR_URL)
         parsed = urlsplit(candidate.split("#", 1)[0])
         if parsed.scheme != "https" or parsed.netloc.lower() not in ACADEMY_HOSTS:
             continue
-        if not parsed.path.rstrip("/").startswith("/programs/detail/"):
+        if not parsed.path.rstrip("/").startswith(ACADEMY_DETAIL_PATH_PREFIXES):
             continue
         normalized = urlunsplit(("https", parsed.netloc.lower(), parsed.path.rstrip("/") + "/", "", ""))
         if normalized not in urls:
@@ -891,7 +954,7 @@ def parse_academy_event(html: str, page_url: str, now: datetime | None = None) -
     """Parse one Academy detail page, accepting only explicitly labelled screenings."""
 
     current = as_la(now)
-    if not urlsplit(page_url).path.rstrip("/").startswith("/programs/detail/") or not academy_labelled_screening(html):
+    if not urlsplit(page_url).path.rstrip("/").startswith(ACADEMY_DETAIL_PATH_PREFIXES) or not academy_labelled_screening(html):
         return None
     parser = parse_html(html)
     title = next(
@@ -2220,6 +2283,303 @@ def parse_vista_session_feed(html: str, now: datetime | None = None) -> list[dic
 parse_veezi_session_feed = parse_vista_session_feed
 
 
+FILMFORUM_DATETIME_RE = re.compile(
+    rf"(?:date|start date):\s*(?P<month>{MONTH_PATTERN_SHORT})\s+(?P<day>\d{{1,2}}),\s*(?P<year>20\d{{2}})\s+(?P<hour>\d{{1,2}})(?::(?P<minute>\d{{2}}))?\s*(?P<meridiem>[ap]\.?(?:m)\.?)",
+    re.I,
+)
+OLD_TOWN_SHOWTIME_RE = re.compile(
+    rf"\b(?P<month>{MONTH_PATTERN_SHORT})\s+(?P<day>\d{{1,2}})(?:st|nd|rd|th)?[,]?\s+(?P<hour>\d{{1,2}})(?::(?P<minute>\d{{2}}))?\s*(?P<meridiem>[ap]\.?(?:m)\.?)\b",
+    re.I,
+)
+
+
+def parse_filmforum_datetime(value: str) -> datetime | None:
+    match = FILMFORUM_DATETIME_RE.search(value)
+    if not match:
+        return None
+    values = match.groupdict()
+    try:
+        hour, minute = parse_time(values["hour"], values.get("minute") or "0", values["meridiem"])
+        return datetime(
+            int(values["year"]),
+            MONTHS[values["month"].lower()[:3]],
+            int(values["day"]),
+            hour,
+            minute,
+            tzinfo=LA_TZ,
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def parse_old_town_showtime(value: str, current: datetime, default_year: int | None = None) -> datetime | None:
+    match = OLD_TOWN_SHOWTIME_RE.search(value)
+    if not match:
+        return None
+    values = match.groupdict()
+    try:
+        month = MONTHS[values["month"].lower()[:3]]
+        year = default_year or (current.year + 1 if month < current.month else current.year)
+        hour, minute = parse_time(values["hour"], values.get("minute") or "0", values["meridiem"])
+        return datetime(year, month, int(values["day"]), hour, minute, tzinfo=LA_TZ)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def parse_ucla_datetime_candidates(parser: PageParser, current: datetime) -> list[datetime]:
+    candidates = _academy_visible_datetime_candidates(parser)
+    if candidates:
+        return candidates
+    return academy_datetime_candidates("", parser, current)
+
+
+def parse_fine_arts_sessions(html: str, now: datetime | None = None) -> list[dict]:
+    """Parse Fine Arts' official Veezi schedule using the shared session parser."""
+
+    return parse_veezi_session_feed(html, now)
+
+
+def discover_filmforum_entries(html: str, base_url: str = FILMFORUM_SCHEDULE_URL) -> list[dict]:
+    """Parse Filmforum's schedule cards into canonical date/title entries."""
+
+    parser = parse_html(html)
+    lines = parser.lines
+    entries: list[dict] = []
+    used: set[tuple[str, str]] = set()
+    for index, line in enumerate(lines):
+        start_at = parse_filmforum_datetime(line)
+        if not start_at:
+            continue
+        title = ""
+        for candidate in reversed(lines[max(0, index - 5):index]):
+            if normalize_key(candidate).startswith(("date:", "start date:", "location:", "details", "buy tickets")):
+                continue
+            if is_probable_screening_title(candidate):
+                title = candidate
+                break
+        if not title:
+            continue
+        location = ""
+        for candidate in lines[index + 1:index + 5]:
+            if normalize_key(candidate).startswith("location:"):
+                location = normalize_space(candidate.split(":", 1)[1])
+                break
+        page_url = base_url
+        ticket_url = base_url
+        title_key = screening_title_key(title)
+        for link in parser.links:
+            candidate_url = urljoin(base_url, link.get("href", ""))
+            parsed = urlsplit(candidate_url)
+            link_key = screening_title_key(link.get("text", ""))
+            if parsed.netloc.lower() in {"lafilmforum.org", "www.lafilmforum.org"} and (
+                link_key == title_key or title_key in link_key or link_key in {"details", "more details"}
+            ):
+                page_url = candidate_url.split("#", 1)[0]
+                break
+        for link in parser.links:
+            candidate_url = urljoin(base_url, link.get("href", ""))
+            if "ticket" in normalize_key(link.get("text", "")) or "buy" in normalize_key(link.get("text", "")):
+                ticket_url = candidate_url
+                break
+        key = (title_key, start_at.isoformat())
+        if key in used:
+            continue
+        used.add(key)
+        entries.append(
+            {
+                "title": title,
+                "startAt": start_at,
+                "pageUrl": page_url,
+                "ticketUrl": ticket_url,
+                "location": location,
+            }
+        )
+    return entries
+
+
+def parse_filmforum_detail(html: str, page_url: str) -> dict:
+    parser = parse_html(html)
+    title = next(
+        (heading["text"] for heading in parser.headings if heading.get("tag") == "h1" and heading.get("text")),
+        "",
+    )
+    formats = []
+    for token in re.findall(r"\b(?:35|70|16)mm\b|\b(?:DCP|digital|video)\b", " ".join(parser.lines), re.I):
+        token = token.upper() if token.upper() in {"DCP", "DIGITAL", "VIDEO"} else token.lower()
+        if token not in formats:
+            formats.append(token)
+    notes = " · ".join(
+        dict.fromkeys(
+            line for line in parser.lines
+            if any(marker in normalize_key(line) for marker in ("in person", "premiere", "q&a", "introduced by"))
+        )
+    )[:220]
+    return {
+        "title": title,
+        "year": next((match for match in re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", " ".join(parser.lines)) if int(match) < 2027), ""),
+        "format": " / ".join(formats),
+        "synopsis": " ".join(parser.lines[1:])[:520],
+        "notes": notes,
+        "ticketUrl": pick_ticket_url(parser, page_url),
+        "image": (absolute_images(parser, page_url) or [""])[0],
+    }
+
+
+def discover_old_town_movie_urls(html: str, base_url: str = OLD_TOWN_HOME_URL) -> list[str]:
+    parser = parse_html(html)
+    urls: list[str] = []
+    for link in parser.links:
+        candidate = urljoin(base_url, link.get("href", "")).split("#", 1)[0]
+        parsed = urlsplit(candidate)
+        if parsed.scheme != "https" or parsed.netloc.lower() not in {"oldtownmusichall.org", "www.oldtownmusichall.org"}:
+            continue
+        if not parsed.path.rstrip("/").startswith("/movie/"):
+            continue
+        if candidate not in urls:
+            urls.append(candidate)
+    return urls
+
+
+def parse_old_town_movie(html: str, page_url: str, now: datetime | None = None) -> dict:
+    current = as_la(now)
+    parser = parse_html(html)
+    title = next(
+        (heading["text"] for heading in parser.headings if heading.get("tag") == "h1" and heading.get("text")),
+        normalize_space(parser.meta.get("og:title", "")).split("|", 1)[0],
+    )
+    if not title:
+        return {"title": "", "showtimes": []}
+    documents = academy_json_documents(html)
+    iso_dates = re.findall(r"20\d{2}-\d{2}-\d{2}", html)
+    default_year = int(iso_dates[0][:4]) if iso_dates else current.year
+    showtimes: list[dict] = []
+    seen: set[str] = set()
+    for line in parser.lines:
+        start_at = parse_old_town_showtime(line, current, default_year)
+        if not start_at or start_at <= current or start_at.isoformat() in seen:
+            continue
+        seen.add(start_at.isoformat())
+        ticket_url = page_url
+        for link in parser.links:
+            if parse_old_town_showtime(link.get("text", ""), current, default_year) == start_at:
+                ticket_url = urljoin(page_url, link.get("href", ""))
+                break
+        showtimes.append({"startAt": start_at, "ticketUrl": ticket_url})
+    lines_text = " ".join(parser.lines)
+    format_name = " / ".join(
+        dict.fromkeys(
+            token.upper() if token.upper() in {"35MM", "70MM"} else token
+            for token in re.findall(r"\b(?:35mm|70mm|16mm|DCP|Digital|Silent)\b", lines_text, re.I)
+        )
+    )
+    notes = " · ".join(
+        dict.fromkeys(
+            line for line in parser.lines
+            if any(marker in normalize_key(line) for marker in ("live accompaniment", "mighty wurlitzer", "introduced by", "sing-along"))
+        )
+    )[:220]
+    year = next(
+        (match for match in re.findall(r"(?<!\d)((?:18|19|20)\d{2})(?!\d)", lines_text) if int(match) != default_year),
+        "",
+    )
+    return {
+        "title": title,
+        "showtimes": showtimes,
+        "year": year,
+        "format": format_name,
+        "synopsis": academy_value(documents, ("description", "shortDescription", "summary")),
+        "notes": notes,
+        "ticketUrl": pick_ticket_url(parser, page_url),
+        "image": (absolute_images(parser, page_url) or [""])[0],
+    }
+
+
+UCLA_HOSTS = {"cinema.ucla.edu", "www.cinema.ucla.edu"}
+
+
+def discover_ucla_event_urls(html: str, base_url: str = UCLA_EVENTS_URL) -> list[str]:
+    parser = parse_html(html)
+    candidates = [urljoin(base_url, link.get("href", "")) for link in parser.links]
+    candidates.extend(
+        urljoin(base_url, match.group(0))
+        for match in re.finditer(
+            r"(?:https?://[^\"'<> ]+)?/events/[A-Za-z0-9%._~:/?#\[\]@!$&'()*+,;=-]+",
+            html.replace("\\/", "/"),
+        )
+    )
+    urls: list[str] = []
+    for candidate in candidates:
+        parsed = urlsplit(candidate.split("#", 1)[0])
+        if parsed.scheme != "https" or parsed.netloc.lower() not in UCLA_HOSTS:
+            continue
+        if parsed.path.rstrip("/") in {"/events", "/events/"} or not parsed.path.rstrip("/").startswith("/events/"):
+            continue
+        normalized = urlunsplit(("https", parsed.netloc.lower(), parsed.path.rstrip("/") + "/", "", ""))
+        if normalized not in urls:
+            urls.append(normalized)
+    return urls
+
+
+def ucla_labelled_screening(parser: PageParser) -> bool:
+    lines = [normalize_key(line) for line in parser.lines]
+    return any(
+        "screening" in line
+        or "family flicks" in line
+        or "film archive" in line
+        or "film program" in line
+        for line in lines
+    )
+
+
+def parse_ucla_event(html: str, page_url: str, now: datetime | None = None) -> dict | None:
+    current = as_la(now)
+    parser = parse_html(html)
+    if not urlsplit(page_url).path.rstrip("/").startswith("/events/") or not ucla_labelled_screening(parser):
+        return None
+    title = next(
+        (heading["text"] for heading in parser.headings if heading.get("tag") == "h1" and heading.get("text")),
+        normalize_space(parser.meta.get("og:title", "")).split("|", 1)[0],
+    )
+    if not title:
+        return None
+    dates = parse_ucla_datetime_candidates(parser, current)
+    if not dates:
+        return None
+    venue = next(
+        (line for line in parser.lines if "theater" in normalize_key(line) or "theatre" in normalize_key(line)),
+        "Billy Wilder Theater",
+    )
+    lines_text = " ".join(parser.lines)
+    formats = []
+    for token in re.findall(r"\b(?:35|70|16)mm\b|\b(?:DCP|Digital|Video)\b", lines_text, re.I):
+        normalized = token.upper() if token.upper() in {"DCP", "DIGITAL", "VIDEO"} else token.lower()
+        if normalized not in formats:
+            formats.append(normalized)
+    notes = " · ".join(
+        dict.fromkeys(
+            line for line in parser.lines
+            if any(marker in normalize_key(line) for marker in ("in person", "presented by", "free admission", "first come"))
+        )
+    )[:220]
+    return make_event(
+        source_id="ucla-film-archive",
+        source_name="UCLA Film & Television Archive",
+        title=title,
+        start_at=dates[0],
+        now=current,
+        page_url=page_url,
+        ticket_url=pick_ticket_url(parser, page_url),
+        venue=venue,
+        year=first_label_value(parser.lines, ("Year", "Release year")),
+        format_name=" / ".join(formats),
+        synopsis=" ".join(parser.lines[1:])[:520],
+        notes=notes,
+        image=(absolute_images(parser, page_url) or [""])[0],
+        source_page_url=UCLA_EVENTS_URL,
+        detail_status="verified-ucla-archive",
+    )
+
+
 VISTA_MONTH_LINE_RE = re.compile(rf"^(?P<month>{MONTH_PATTERN})(?:\s+(?P<year>20\d{{2}}))?$", re.I)
 VISTA_DAY_LINE_RE = re.compile(r"^(?P<day>\d{1,2})(?:st|nd|rd|th)?$", re.I)
 VISTA_COMBINED_DATE_RE = re.compile(
@@ -2914,6 +3274,251 @@ def _scrape_academy_museum(current: datetime, fetcher: CachedFetcher, force: boo
     return {"events": events, "source": source, "errors": errors[:5]}
 
 
+def _scrape_fine_arts(current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
+    started = time.monotonic()
+    checked_at = iso_utc()
+    errors: list[str] = []
+    warnings: list[str] = []
+    events: list[dict] = []
+    try:
+        html, checked_at, _ = fetcher.fetch(FINE_ARTS_SESSIONS_URL, force=force)
+        entries = parse_fine_arts_sessions(html, current)
+        if not entries:
+            errors.append("Veezi sessions: no upcoming screenings discovered")
+        for entry in entries:
+            event = make_event(
+                source_id="fine-arts-theatre",
+                source_name="Fine Arts Theatre Beverly Hills",
+                title=entry["title"],
+                start_at=entry["startAt"],
+                now=current,
+                page_url=FINE_ARTS_SESSIONS_URL,
+                ticket_url=FINE_ARTS_SESSIONS_URL,
+                venue="Fine Arts Theatre Beverly Hills",
+                format_name=entry.get("format", ""),
+                notes=entry.get("notes", ""),
+                source_page_url=FINE_ARTS_SESSIONS_URL,
+                detail_status="verified-fine-arts-veezi",
+            )
+            event["sourceLastChecked"] = checked_at
+            events.append(event)
+    except Exception as error:
+        errors.append(f"Fine Arts Theatre Beverly Hills: {error}")
+    source = {
+        "id": "fine-arts-theatre",
+        "name": "Fine Arts Theatre Beverly Hills",
+        "city": "los-angeles",
+        "url": FINE_ARTS_SESSIONS_URL,
+        "adapter": "fine_arts_theatre",
+        "required": False,
+        "lastChecked": checked_at,
+        "status": "verified" if events and not errors else ("degraded" if events else "error"),
+        "eventCount": len(events),
+        "pagesChecked": 1 if events or errors else 0,
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "errors": errors[:5],
+        "warnings": warnings[:5],
+    }
+    return {"events": events, "source": source, "errors": errors[:5]}
+
+
+def _scrape_filmforum(current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
+    started = time.monotonic()
+    checked_at = iso_utc()
+    errors: list[str] = []
+    warnings: list[str] = []
+    events: list[dict] = []
+    pages_checked = 0
+    try:
+        schedule_html, checked_at, _ = fetcher.fetch(FILMFORUM_SCHEDULE_URL, force=force)
+        pages_checked += 1
+        entries = discover_filmforum_entries(schedule_html)
+        detail_urls = list(dict.fromkeys(entry["pageUrl"] for entry in entries if entry.get("pageUrl") != FILMFORUM_SCHEDULE_URL))[:DEFAULT_MAX_DETAIL_EVENTS]
+        details = parallel_fetch(fetcher, detail_urls, force=force, max_workers=12)
+        detail_cache: dict[str, dict] = {}
+        for page_url in detail_urls:
+            result = details.get(page_url)
+            if isinstance(result, Exception):
+                warnings.append(f"{page_url}: {result}")
+                continue
+            if not result:
+                continue
+            detail_html, page_checked_at, _ = result
+            pages_checked += 1
+            detail_cache[page_url] = {**parse_filmforum_detail(detail_html, page_url), "checkedAt": page_checked_at}
+        for entry in entries:
+            detail = detail_cache.get(entry.get("pageUrl", ""), {})
+            venue = entry.get("location") or "Los Angeles Filmforum"
+            event = make_event(
+                source_id="filmforum",
+                source_name="Los Angeles Filmforum",
+                title=entry["title"],
+                start_at=entry["startAt"],
+                now=current,
+                page_url=entry.get("pageUrl") or FILMFORUM_SCHEDULE_URL,
+                ticket_url=entry.get("ticketUrl") or detail.get("ticketUrl") or entry.get("pageUrl") or FILMFORUM_SCHEDULE_URL,
+                venue=venue,
+                year=detail.get("year", ""),
+                format_name=detail.get("format", ""),
+                synopsis=detail.get("synopsis", ""),
+                notes=detail.get("notes", ""),
+                image=detail.get("image", ""),
+                source_page_url=FILMFORUM_SCHEDULE_URL,
+                detail_status="verified-filmforum",
+            )
+            event["sourceLastChecked"] = detail.get("checkedAt", checked_at)
+            events.append(event)
+        if not entries:
+            errors.append("Schedule: no dated programs discovered")
+    except Exception as error:
+        errors.append(f"Los Angeles Filmforum: {error}")
+    events = deduplicate_events(events)
+    source = {
+        "id": "filmforum",
+        "name": "Los Angeles Filmforum",
+        "city": "los-angeles",
+        "url": FILMFORUM_SCHEDULE_URL,
+        "adapter": "filmforum",
+        "required": False,
+        "lastChecked": checked_at,
+        "status": "verified" if events and not errors else ("degraded" if events else "error"),
+        "eventCount": len(events),
+        "pagesChecked": pages_checked,
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "errors": errors[:5],
+        "warnings": warnings[:5],
+    }
+    return {"events": events, "source": source, "errors": errors[:5]}
+
+
+def _scrape_old_town_music_hall(current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
+    started = time.monotonic()
+    checked_at = iso_utc()
+    errors: list[str] = []
+    warnings: list[str] = []
+    events: list[dict] = []
+    pages_checked = 0
+    try:
+        home_html, checked_at, _ = fetcher.fetch(OLD_TOWN_HOME_URL, force=force)
+        pages_checked += 1
+        movie_urls = discover_old_town_movie_urls(home_html)[:DEFAULT_MAX_DETAIL_EVENTS]
+        results = parallel_fetch(fetcher, movie_urls, force=force, max_workers=12)
+        for page_url in movie_urls:
+            result = results.get(page_url)
+            if isinstance(result, Exception):
+                warnings.append(f"{page_url}: {result}")
+                continue
+            if not result:
+                continue
+            html, page_checked_at, _ = result
+            pages_checked += 1
+            details = parse_old_town_movie(html, page_url, current)
+            for showtime in details.get("showtimes", []):
+                event = make_event(
+                    source_id="old-town-music-hall",
+                    source_name="Old Town Music Hall",
+                    title=details["title"],
+                    start_at=showtime["startAt"],
+                    now=current,
+                    page_url=page_url,
+                    ticket_url=showtime.get("ticketUrl") or details.get("ticketUrl") or page_url,
+                    venue="Old Town Music Hall",
+                    year=details.get("year", ""),
+                    format_name=details.get("format", ""),
+                    synopsis=details.get("synopsis", ""),
+                    notes=details.get("notes", ""),
+                    image=details.get("image", ""),
+                    source_page_url=OLD_TOWN_HOME_URL,
+                    detail_status="verified-old-town-music-hall",
+                )
+                event["sourceLastChecked"] = page_checked_at or checked_at
+                events.append(event)
+        if not movie_urls:
+            errors.append("Home page: no movie pages discovered")
+    except Exception as error:
+        errors.append(f"Old Town Music Hall: {error}")
+    events = deduplicate_events(events)
+    source = {
+        "id": "old-town-music-hall",
+        "name": "Old Town Music Hall",
+        "city": "los-angeles",
+        "url": OLD_TOWN_HOME_URL,
+        "adapter": "old_town_music_hall",
+        "required": False,
+        "lastChecked": checked_at,
+        "status": "verified" if events and not errors else ("degraded" if events else "error"),
+        "eventCount": len(events),
+        "pagesChecked": pages_checked,
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "errors": errors[:5],
+        "warnings": warnings[:5],
+    }
+    return {"events": events, "source": source, "errors": errors[:5]}
+
+
+def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
+    started = time.monotonic()
+    checked_at = iso_utc()
+    errors: list[str] = []
+    warnings: list[str] = []
+    events: list[dict] = []
+    pages_checked = 0
+    try:
+        event_urls: list[str] = []
+        for index_url in (UCLA_EVENTS_URL, UCLA_SERIES_URL):
+            try:
+                index_html, index_checked_at, _ = fetcher.fetch(index_url, force=force)
+                checked_at = index_checked_at or checked_at
+                pages_checked += 1
+                event_urls.extend(discover_ucla_event_urls(index_html, index_url))
+            except Exception as error:
+                warnings.append(f"{index_url}: {error}")
+        if not event_urls:
+            try:
+                sitemap_html, sitemap_checked_at, _ = fetcher.fetch(UCLA_SITEMAP_URL, force=force)
+                checked_at = sitemap_checked_at or checked_at
+                pages_checked += 1
+                event_urls.extend(discover_ucla_event_urls(sitemap_html, UCLA_EVENTS_URL))
+            except Exception as error:
+                warnings.append(f"{UCLA_SITEMAP_URL}: {error}")
+        event_urls = list(dict.fromkeys(event_urls))[:DEFAULT_MAX_AC_EVENTS]
+        results = parallel_fetch(fetcher, event_urls, force=force, max_workers=16)
+        for page_url in event_urls:
+            result = results.get(page_url)
+            if isinstance(result, Exception):
+                warnings.append(f"{page_url}: {result}")
+                continue
+            if not result:
+                continue
+            html, page_checked_at, _ = result
+            pages_checked += 1
+            event = parse_ucla_event(html, page_url, current)
+            if event:
+                event["sourceLastChecked"] = page_checked_at or checked_at
+                events.append(event)
+        if not event_urls:
+            errors.append("Events index: no event pages discovered")
+    except Exception as error:
+        errors.append(f"UCLA Film & Television Archive: {error}")
+    events = deduplicate_events(events)
+    source = {
+        "id": "ucla-film-archive",
+        "name": "UCLA Film & Television Archive",
+        "city": "los-angeles",
+        "url": UCLA_EVENTS_URL,
+        "adapter": "ucla_film_archive",
+        "required": False,
+        "lastChecked": checked_at,
+        "status": "verified" if events and not errors else ("degraded" if events else "error"),
+        "eventCount": len(events),
+        "pagesChecked": pages_checked,
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "errors": errors[:5],
+        "warnings": warnings[:5],
+    }
+    return {"events": events, "source": source, "errors": errors[:5]}
+
+
 def _scrape_new_beverly(current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
     """Index New Beverly from Veezi and optionally enrich with venue pages.
 
@@ -3318,6 +3923,10 @@ def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | Non
         "vista-theater": _scrape_vista,
         "vidiots": _scrape_vidiots,
         "academy-museum": _scrape_academy_museum,
+        "fine-arts-theatre": _scrape_fine_arts,
+        "filmforum": _scrape_filmforum,
+        "old-town-music-hall": _scrape_old_town_music_hall,
+        "ucla-film-archive": _scrape_ucla_film_archive,
     }
     results: dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="rerun-source") as executor:
@@ -3335,6 +3944,10 @@ def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | Non
                     "vista-theater": "Vista Theater Hollywood",
                     "vidiots": "Vidiots",
                     "academy-museum": "Academy Museum of Motion Pictures",
+                    "fine-arts-theatre": "Fine Arts Theatre Beverly Hills",
+                    "filmforum": "Los Angeles Filmforum",
+                    "old-town-music-hall": "Old Town Music Hall",
+                    "ucla-film-archive": "UCLA Film & Television Archive",
                 }[source_id]
                 results[source_id] = {
                     "events": [],

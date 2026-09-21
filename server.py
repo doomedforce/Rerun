@@ -74,6 +74,15 @@ IMAGE_ALLOWED_HOSTS = {
     "www.academymuseum.org",
     "images.ctfassets.net",
     "images.contentful.com",
+    "fineartstheatrebh.com",
+    "ticketing.uswest.veezi.com",
+    "lafilmforum.org",
+    "www.lafilmforum.org",
+    "oldtownmusichall.org",
+    "www.oldtownmusichall.org",
+    "indy-systems.imgix.net",
+    "cinema.ucla.edu",
+    "www.cinema.ucla.edu",
 }
 
 

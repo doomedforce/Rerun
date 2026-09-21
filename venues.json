@@ -54,5 +54,37 @@
     "neighborhood": "Mid-Wilshire",
     "address": "6067 Wilshire Boulevard, Los Angeles, CA 90036",
     "source": "Academy Museum official calendar"
+  },
+  {
+    "id": "fine-arts-theatre-beverly-hills",
+    "name": "Fine Arts Theatre Beverly Hills",
+    "city": "los-angeles",
+    "neighborhood": "Beverly Hills",
+    "address": "8556 Wilshire Boulevard, Beverly Hills, CA 90211",
+    "source": "Fine Arts Theatre official program and ticket pages"
+  },
+  {
+    "id": "2220-arts-archives",
+    "name": "2220 Arts + Archives",
+    "city": "los-angeles",
+    "neighborhood": "Historic Filipinotown",
+    "address": "2220 Beverly Boulevard, Los Angeles, CA 90057",
+    "source": "LA Filmforum official schedule"
+  },
+  {
+    "id": "old-town-music-hall",
+    "name": "Old Town Music Hall",
+    "city": "los-angeles",
+    "neighborhood": "El Segundo",
+    "address": "140 Richmond Street, El Segundo, CA 90245",
+    "source": "Old Town Music Hall official program pages"
+  },
+  {
+    "id": "billy-wilder-theater",
+    "name": "Billy Wilder Theater",
+    "city": "los-angeles",
+    "neighborhood": "Westwood",
+    "address": "10899 Wilshire Boulevard, Los Angeles, CA 90024",
+    "source": "UCLA Film & Television Archive official event pages"
   }
 ]

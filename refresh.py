@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 REFRESH_TTL_SECONDS = int(os.environ.get("RERUN_REFRESH_TTL_SECONDS", "1800"))
 RETRY_BACKOFF_SECONDS = int(os.environ.get("RERUN_REFRESH_RETRY_SECONDS", "600"))
-FEED_POLICY_VERSION = 15
+FEED_POLICY_VERSION = 16
 LOCK_PATH = DATA_DIR / ".refresh.lock"
 
 

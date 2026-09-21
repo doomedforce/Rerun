@@ -65,5 +65,57 @@
     "eventCount": 0,
     "pagesChecked": 0,
     "errors": []
+  },
+  {
+    "id": "fine-arts-theatre",
+    "name": "Fine Arts Theatre Beverly Hills",
+    "city": "los-angeles",
+    "url": "https://ticketing.uswest.veezi.com/sessions/?siteToken=tez3prscsvfbagchhkxbevjwk8",
+    "adapter": "fine_arts_theatre",
+    "required": false,
+    "lastChecked": "2026-09-07T00:00:00Z",
+    "status": "seed",
+    "eventCount": 0,
+    "pagesChecked": 0,
+    "errors": []
+  },
+  {
+    "id": "filmforum",
+    "name": "Los Angeles Filmforum",
+    "city": "los-angeles",
+    "url": "https://www.lafilmforum.org/schedule/",
+    "adapter": "filmforum",
+    "required": false,
+    "lastChecked": "2026-09-07T00:00:00Z",
+    "status": "seed",
+    "eventCount": 0,
+    "pagesChecked": 0,
+    "errors": []
+  },
+  {
+    "id": "old-town-music-hall",
+    "name": "Old Town Music Hall",
+    "city": "los-angeles",
+    "url": "https://www.oldtownmusichall.org/home/",
+    "adapter": "old_town_music_hall",
+    "required": false,
+    "lastChecked": "2026-09-07T00:00:00Z",
+    "status": "seed",
+    "eventCount": 0,
+    "pagesChecked": 0,
+    "errors": []
+  },
+  {
+    "id": "ucla-film-archive",
+    "name": "UCLA Film & Television Archive",
+    "city": "los-angeles",
+    "url": "https://www.cinema.ucla.edu/events/",
+    "adapter": "ucla_film_archive",
+    "required": false,
+    "lastChecked": "2026-09-07T00:00:00Z",
+    "status": "seed",
+    "eventCount": 0,
+    "pagesChecked": 0,
+    "errors": []
   }
 ]
