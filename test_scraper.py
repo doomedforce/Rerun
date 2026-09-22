@@ -179,6 +179,14 @@ VIDIOTS_MULTI_SHOWTIME_DETAIL_HTML = """
 <p>Director: Andrzej Zulawski</p><p>1981</p><p>35mm</p></html>
 """
 
+VIDIOTS_RELATED_SHOWTIME_DETAIL_HTML = """
+<html><h1>Only at Seven</h1>
+<p>Friday, September 11, 2026</p><a href="https://tickets.example/only-at-seven">7:00 PM</a>
+<h2>Related Movies</h2>
+<p>Friday, September 11, 2026</p><a href="https://tickets.example/another-movie">9:45 PM</a>
+</html>
+"""
+
 VIDIOTS_DETAIL_HTML = """
 <html><head><meta property="og:image" content="https://assets.example/possession.jpg"></head>
 <h1>Possession</h1><p>Friday, September 11, 2026</p>
@@ -218,6 +226,13 @@ ACADEMY_DETAIL_HTML = """
 ACADEMY_NON_SCREENING_HTML = """
 <html><h1>Monster Mash</h1><p>Special Events</p>
 <p>Sat, Sep 26, 2026</p><p>A family day at the museum.</p></html>
+"""
+
+ACADEMY_RELATED_TIME_HTML = """
+<html><body><h1>Own Event Without a Posted Time</h1>
+<p>Screening from Series</p><p>Thu, Sep 24, 2026</p>
+<h2>More in Series</h2><p>Fri, Sep 25, 2026</p><p>9:45 PM</p>
+</body></html>
 """
 
 FINE_ARTS_HTML = """
@@ -272,6 +287,13 @@ UCLA_HTML = """
 <p>Year</p><p>1999</p><p>Digital</p></body></html>
 """
 
+UCLA_RELATED_TIME_HTML = """
+<html><body><h1>Current UCLA Event</h1><p>Screening 1 of 1</p>
+<p>Dec 2, 2026</p><p>7:00 pm</p><p>Billy Wilder Theater</p>
+<h2>More in this series</h2><p>Dec 3, 2026</p><p>9:45 pm</p><p>Another Theater</p>
+</body></html>
+"""
+
 UCLA_SITEMAP_INDEX_XML = """
 <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <sitemap><loc>https://www.cinema.ucla.edu/events-sitemap.xml</loc></sitemap>
@@ -282,6 +304,13 @@ UCLA_EVENT_SITEMAP_XML = """
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://cinema.ucla.edu/events/introducing-dorothy-dandridge-2026-12-02/</loc></url>
   <url><loc>https://cinema.ucla.edu/series/archive-treasures/</loc></url>
+</urlset>
+"""
+
+UCLA_EVENT_SITEMAP_WITH_HISTORY_XML = """
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://www.cinema.ucla.edu/events/past-event-2026-01-01/</loc></url>
+  <url><loc>https://www.cinema.ucla.edu/events/introducing-dorothy-dandridge-2026-12-02/</loc></url>
 </urlset>
 """
 
@@ -364,6 +393,14 @@ class ScraperTests(unittest.TestCase):
             )
         )
 
+    def test_academy_parser_never_uses_a_related_event_time(self):
+        event = scraper.parse_academy_event(
+            ACADEMY_RELATED_TIME_HTML,
+            "https://www.academymuseum.org/programs/detail/own-event-without-a-posted-time/",
+            NOW,
+        )
+        self.assertIsNone(event)
+
     def test_academy_scraper_traverses_calendar_and_detail_pages(self):
         calendar_page_2 = '<a href="/programs/detail/second-screening-019f-example">Second Screening</a>'
         pages = {
@@ -375,6 +412,18 @@ class ScraperTests(unittest.TestCase):
         result = scraper._scrape_academy_museum(NOW, FakeFetcher(pages), force=True)
         self.assertEqual(result["source"]["status"], "verified")
         self.assertEqual(len(result["events"]), 2)
+
+    def test_academy_scraper_uses_server_rendered_series_when_calendar_is_empty(self):
+        detail_url = "https://www.academymuseum.org/programs/detail/far-from-heaven-019fce4c-example/"
+        pages = {
+            scraper.ACADEMY_CALENDAR_URL: "<html><p>Data Loading in Progress</p></html>",
+            scraper.ACADEMY_FILMS_URL: "<html><h1>Screenings &amp; Series</h1></html>",
+            scraper.ACADEMY_SERIES_SEED_URLS[0]: '<a href="/programs/detail/far-from-heaven-019fce4c-example">Far from Heaven</a>',
+            detail_url: ACADEMY_DETAIL_HTML,
+        }
+        result = scraper._scrape_academy_museum(NOW, FakeFetcher(pages), force=True)
+        self.assertEqual(result["source"]["status"], "verified")
+        self.assertEqual(result["source"]["eventCount"], 1)
 
     def test_additional_repertory_sources_parse_official_shapes(self):
         fine_arts = scraper.parse_fine_arts_sessions(FINE_ARTS_HTML, NOW)
@@ -426,6 +475,30 @@ class ScraperTests(unittest.TestCase):
             scraper.discover_ucla_event_urls(UCLA_EVENT_SITEMAP_XML),
             ["https://cinema.ucla.edu/events/introducing-dorothy-dandridge-2026-12-02/"],
         )
+
+    def test_ucla_parser_stops_before_more_in_this_series(self):
+        event = scraper.parse_ucla_event(
+            UCLA_RELATED_TIME_HTML,
+            "https://www.cinema.ucla.edu/events/current-ucla-event-2026-12-02/",
+            NOW,
+        )
+        self.assertIsNotNone(event)
+        self.assertEqual(event["startAt"], "2026-12-02T19:00:00-08:00")
+        self.assertNotIn("Another Theater", event["synopsis"])
+
+    def test_ucla_sitemap_prefers_future_events_before_historical_urls(self):
+        future_url = "https://www.cinema.ucla.edu/events/introducing-dorothy-dandridge-2026-12-02/"
+        pages = {
+            scraper.UCLA_EVENTS_URL: "<html><p>Data Loading in Progress</p></html>",
+            scraper.UCLA_SERIES_URL: "<html><p>Data Loading in Progress</p></html>",
+            scraper.UCLA_SITEMAP_URLS[0]: UCLA_EVENT_SITEMAP_WITH_HISTORY_XML,
+            future_url: UCLA_HTML,
+        }
+        with patch.object(scraper, "DEFAULT_MAX_AC_EVENTS", 1):
+            result = scraper._scrape_ucla_film_archive(NOW, FakeFetcher(pages), force=True)
+        self.assertEqual(result["source"]["status"], "verified")
+        self.assertEqual(result["source"]["eventCount"], 1)
+        self.assertEqual(result["events"][0]["sourceUrl"], future_url)
 
     def test_new_sources_are_optional_and_registered(self):
         for source_id in ("fine-arts-theatre", "filmforum", "old-town-music-hall", "ucla-film-archive"):
@@ -643,6 +716,15 @@ class ScraperTests(unittest.TestCase):
         entries = scraper.parse_new_beverly_schedule(NEW_BEV_UNTITLED_TIME_HTML, scraper.NEW_BEV_SCHEDULE_URL, NOW)
         self.assertEqual(entries, [])
 
+    def test_new_beverly_schedule_drops_ambiguous_multi_time_fallback_rows(self):
+        html = """
+        <a href="/program/september-11-ambiguous/">
+          Friday, September 11 7:00 pm / 9:45 pm One Film More Info
+        </a>
+        """
+        entries = scraper.parse_new_beverly_schedule(html, scraper.NEW_BEV_SCHEDULE_URL, NOW)
+        self.assertEqual(entries, [])
+
     def test_new_beverly_detail_keeps_each_film_metadata(self):
         details = scraper.parse_new_beverly_detail(DETAIL_HTML, "https://thenewbev.com/program/september-8-rocky-bound-for-glory/")
         self.assertEqual(details["films"][0]["director"], "John G. Avildsen")
@@ -768,6 +850,17 @@ class ScraperTests(unittest.TestCase):
                 "https://tickets.example/possession-730",
                 "https://tickets.example/possession-945",
             ],
+        )
+
+    def test_vidiots_movie_detail_ignores_related_movie_showtimes(self):
+        details = scraper.parse_vidiots_movie_detail(
+            VIDIOTS_RELATED_SHOWTIME_DETAIL_HTML,
+            "https://vidiotsfoundation.org/movies/only-at-seven/",
+            NOW,
+        )
+        self.assertEqual(
+            [showtime["startAt"].strftime("%H:%M") for showtime in details["showtimes"]],
+            ["19:00"],
         )
 
     def test_vidiots_traversal_discovers_upcoming_listing_pages(self):

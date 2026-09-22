@@ -129,11 +129,18 @@ VISTA_SESSIONS_URL = "https://ticketing.uswest.veezi.com/sessions/?siteToken=20x
 VIDIOTS_HOME_URL = "https://vidiotsfoundation.org/"
 VIDIOTS_URL = "https://vidiotsfoundation.org/coming-soon/"
 VIDIOTS_PARTNER_URL = "https://la.teentix.org/venues/vidiots/"
-ACADEMY_CALENDAR_URL = "https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O"
+ACADEMY_CALENDAR_URL = "https://www.academymuseum.org/calendar?programTypes=16i3uOYQwism7sMDhIQr2O"
+ACADEMY_CALENDAR_FALLBACK_URL = "https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O"
 ACADEMY_FILMS_URL = "https://www.academymuseum.org/en/films?qr=theater"
 ACADEMY_HOSTS = {"academymuseum.org", "www.academymuseum.org", "v2.academymuseum.org"}
 ACADEMY_SCREENING_TYPE_ID = "16i3uOYQwism7sMDhIQr2O"
 ACADEMY_DETAIL_PATH_PREFIXES = ("/programs/detail/", "/en/programs/detail/")
+ACADEMY_SERIES_SEED_URLS = (
+    # These public series pages remain server-rendered when the calendar and
+    # Films directory only expose their cards after JavaScript runs.
+    "https://www.academymuseum.org/programs/series/special-screenings",
+    "https://www.academymuseum.org/en/programs/series/family-matinees",
+)
 ACADEMY_SITEMAP_URLS = (
     "https://www.academymuseum.org/sitemap.xml",
     "https://www.academymuseum.org/sitemap_index.xml",
@@ -146,6 +153,10 @@ UCLA_EVENTS_URL = "https://www.cinema.ucla.edu/events/"
 UCLA_SERIES_URL = "https://www.cinema.ucla.edu/series/"
 UCLA_SITEMAP_URL = "https://www.cinema.ucla.edu/sitemap.xml"
 UCLA_SITEMAP_URLS = (
+    # UCLA's event sitemap is the most direct server-readable discovery path.
+    # Keep the generic sitemap variants below for deployments that rename it.
+    "https://www.cinema.ucla.edu/events-sitemap.xml",
+    "https://cinema.ucla.edu/events-sitemap.xml",
     UCLA_SITEMAP_URL,
     "https://cinema.ucla.edu/sitemap.xml",
     "https://www.cinema.ucla.edu/sitemap_index.xml",
@@ -812,9 +823,49 @@ def _academy_record_datetime(record: dict) -> datetime | None:
     return None
 
 
-def _academy_visible_datetime_candidates(parser: PageParser) -> list[datetime]:
+DETAIL_CONTENT_STOP_MARKERS = frozenset(
+    {
+        "related events",
+        "related content",
+        "more in series",
+        "more in this series",
+        "you may also like",
+        "other upcoming events",
+        "other events",
+        "stay updated",
+    }
+)
+
+
+def primary_event_lines(
+    lines: Iterable[str],
+    stop_markers: Iterable[str] = DETAIL_CONTENT_STOP_MARKERS,
+) -> list[str]:
+    """Return the current event's visible content, excluding recommendation rails.
+
+    Several venue CMSes append cards for other screenings after the event body.
+    A flat-text parser must stop at those headings; otherwise a date or time
+    from a recommended event can be attributed to the page being parsed.
+    """
+
+    markers = {normalize_key(value).rstrip(":") for value in stop_markers}
+    primary: list[str] = []
+    for raw_line in lines:
+        line = normalize_space(raw_line)
+        marker = normalize_key(line).rstrip(":")
+        if marker in markers:
+            break
+        primary.append(line)
+    return primary
+
+
+def _academy_visible_datetime_candidates(
+    parser: PageParser,
+    lines: Iterable[str] | None = None,
+) -> list[datetime]:
+    visible_lines = list(lines) if lines is not None else parser.lines
     candidates: list[datetime] = []
-    for index, line in enumerate(parser.lines):
+    for index, line in enumerate(visible_lines):
         parsed = parse_academy_text_datetime(line)
         if parsed:
             candidates.append(parsed)
@@ -825,7 +876,7 @@ def _academy_visible_datetime_candidates(parser: PageParser) -> list[datetime]:
         # The Academy often renders the date and time as adjacent text nodes.
         # Keep the window tight so a related event cannot supply this event's
         # time accidentally.
-        for nearby in parser.lines[index + 1:index + 4]:
+        for nearby in visible_lines[index + 1:index + 4]:
             time_match = TIME_RE.search(nearby) or re.search(r"\b(\d{1,2}):(\d{2})\b", nearby)
             if not time_match:
                 continue
@@ -849,6 +900,7 @@ def academy_datetime_candidates(
     parser: PageParser,
     now: datetime,
     title: str = "",
+    visible_lines: Iterable[str] | None = None,
 ) -> list[datetime]:
     """Return dates for the detail page's own event, not its related events."""
 
@@ -864,12 +916,20 @@ def academy_datetime_candidates(
             if _academy_record_title_match(record, title):
                 matched_records.append(parsed)
 
-    # A record carrying this page's title is the strongest signal. Otherwise,
-    # use the first primary start record in document order, which is how the
-    # Academy payload presents the current event before related events.
-    candidates = matched_records or start_records[:1]
+    # A record carrying this page's title is the strongest signal. Visible
+    # content belongs to the current page too. Do not blindly trust the first
+    # unrelated JSON date: current Academy payloads include recommendations
+    # and that used to invent a time for the page's event.
+    candidates = matched_records
     if not candidates:
-        candidates = _academy_visible_datetime_candidates(parser)
+        candidates = _academy_visible_datetime_candidates(
+            parser,
+            primary_event_lines(parser.lines) if visible_lines is None else visible_lines,
+        )
+    if not candidates:
+        unique_start_records = {as_la(value).isoformat(): as_la(value) for value in start_records}
+        if len(unique_start_records) == 1:
+            candidates = list(unique_start_records.values())
     unique: dict[str, datetime] = {}
     for candidate in candidates:
         local = as_la(candidate)
@@ -880,7 +940,7 @@ def academy_datetime_candidates(
 
 def academy_labelled_screening(html: str) -> bool:
     parser = parse_html(html)
-    labels = {normalize_key(line).rstrip(":") for line in parser.lines}
+    labels = {normalize_key(line).rstrip(":") for line in primary_event_lines(parser.lines)}
     return "screenings" in labels or "screening from series" in labels
 
 
@@ -997,21 +1057,22 @@ def parse_academy_event(html: str, page_url: str, now: datetime | None = None) -
         title = normalize_space(parser.meta.get("og:title", "")).split("|", 1)[0]
     if not title:
         return None
-    dates = academy_datetime_candidates(html, parser, current, title=title)
+    event_lines = primary_event_lines(parser.lines)
+    dates = academy_datetime_candidates(html, parser, current, title=title, visible_lines=event_lines)
     if not dates:
         return None
     documents = academy_json_documents(html)
     synopsis = academy_value(documents, ("description", "shortDescription", "summary", "synopsis"))
     format_name = academy_value(documents, ("format", "presentationFormat", "filmFormat")) or next(
-        (line for line in parser.lines if re.search(r"\b(?:35mm|70mm|16mm|DCP|4K DCP|3D DCP)\b", line, re.I)),
+        (line for line in event_lines if re.search(r"\b(?:35mm|70mm|16mm|DCP|4K DCP|3D DCP)\b", line, re.I)),
         "",
     )
     year = academy_value(documents, ("releaseYear", "year", "releaseDate"))
     if not year:
-        year_match = re.search(r"\b((?:19|20)\d{2})\b", " ".join(parser.lines))
+        year_match = re.search(r"\b((?:19|20)\d{2})\b", " ".join(event_lines))
         year = year_match.group(1) if year_match else ""
     note_lines = []
-    for line in parser.lines:
+    for line in event_lines:
         lowered = normalize_key(line)
         if any(marker in lowered for marker in ("in person", "selected by", "accessible screening", "premiere")):
             note_lines.append(line)
@@ -1721,11 +1782,11 @@ def parse_new_beverly_schedule(html: str, page_url: str = NEW_BEV_SCHEDULE_URL, 
         elif len(title_parts) != len(times):
             if len(title_parts) > len(times):
                 title_parts = title_parts[: len(times) - 1] + [" / ".join(title_parts[len(times) - 1 :])]
-            elif title_parts:
-                title_parts.extend([title_parts[-1]] * (len(times) - len(title_parts)))
             else:
-                # A date/time row without a film title is usually a program
-                # header or navigation fragment, not a screening.
+                # Do not repeat a title to fill an ambiguous multi-time row.
+                # This fallback is used only if Veezi is unavailable, and a
+                # missing title boundary is safer to omit than to turn a
+                # neighbouring program's showtime into this film's listing.
                 continue
         for index, time_match in enumerate(times):
             title = title_parts[index] if index < len(title_parts) else title_parts[-1]
@@ -1840,6 +1901,16 @@ VIDIOTS_DATE_RE = re.compile(
     re.I,
 )
 VIDIOTS_NUMERIC_DATE_RE = re.compile(r"\b(?P<month>\d{1,2})/(?P<day>\d{1,2})(?:/(?P<year>20\d{2}))?\b")
+VIDIOTS_SHOWTIME_STOP_MARKERS = frozenset(
+    {
+        *DETAIL_CONTENT_STOP_MARKERS,
+        "related movies",
+        "more from vidiots",
+        "other films",
+        "similar films",
+        "recommended",
+    }
+)
 
 
 def parse_vidiots_date(text: str, current: datetime) -> tuple[int, int, int] | None:
@@ -1885,7 +1956,7 @@ def parse_vidiots_showtimes(
     seen: set[str] = set()
     ticket_links = _ticket_links_by_time(links or [], base_url)
     used_ticket_links: set[int] = set()
-    for raw_line in lines:
+    for raw_line in primary_event_lines(lines, VIDIOTS_SHOWTIME_STOP_MARKERS):
         line = normalize_space(raw_line)
         if not line:
             continue
@@ -1917,15 +1988,23 @@ def parse_vidiots_showtimes(
             key = start_at.isoformat()
             if key in seen:
                 continue
-            seen.add(key)
             ticket_url = ""
             signature = (hour, minute)
+            matching_ticket_index: int | None = None
             for index, ticket_link in enumerate(ticket_links):
                 if index in used_ticket_links or ticket_link["signature"] != signature:
                     continue
-                used_ticket_links.add(index)
+                matching_ticket_index = index
                 ticket_url = ticket_link["href"]
                 break
+            # When the page exposes labelled ticket buttons, only accept a
+            # time that is itself attached to one. This avoids collecting a
+            # clock value from a recommendation card or descriptive copy.
+            if ticket_links and matching_ticket_index is None:
+                continue
+            seen.add(key)
+            if matching_ticket_index is not None:
+                used_ticket_links.add(matching_ticket_index)
             results.append({"startAt": start_at, "notes": notes, "ticketUrl": ticket_url})
     return results
 
@@ -2355,11 +2434,23 @@ def parse_old_town_showtime(value: str, current: datetime, default_year: int | N
         return None
 
 
-def parse_ucla_datetime_candidates(parser: PageParser, current: datetime) -> list[datetime]:
-    candidates = _academy_visible_datetime_candidates(parser)
-    if candidates:
-        return candidates
-    return academy_datetime_candidates("", parser, current)
+def parse_ucla_datetime_candidates(
+    parser: PageParser,
+    current: datetime,
+    lines: Iterable[str] | None = None,
+) -> list[datetime]:
+    """Extract only the current UCLA event's explicit visible date and time."""
+
+    candidates = _academy_visible_datetime_candidates(
+        parser,
+        primary_event_lines(parser.lines) if lines is None else lines,
+    )
+    unique: dict[str, datetime] = {}
+    for candidate in candidates:
+        local = as_la(candidate)
+        if local >= current:
+            unique[local.isoformat()] = local
+    return sorted(unique.values())
 
 
 def parse_fine_arts_sessions(html: str, now: datetime | None = None) -> list[dict]:
@@ -2522,6 +2613,7 @@ def parse_old_town_movie(html: str, page_url: str, now: datetime | None = None) 
 
 
 UCLA_HOSTS = {"cinema.ucla.edu", "www.cinema.ucla.edu"}
+UCLA_EVENT_URL_DATE_RE = re.compile(r"-(20\d{2})-(\d{2})-(\d{2})/?$")
 
 
 def _ucla_normalize_url(value: str, base_url: str) -> str:
@@ -2579,7 +2671,7 @@ def discover_ucla_event_urls(html: str, base_url: str = UCLA_EVENTS_URL) -> list
 
 
 def ucla_labelled_screening(parser: PageParser) -> bool:
-    lines = [normalize_key(line) for line in parser.lines]
+    lines = [normalize_key(line) for line in primary_event_lines(parser.lines)]
     return any(
         "screening" in line
         or "family flicks" in line
@@ -2587,6 +2679,36 @@ def ucla_labelled_screening(parser: PageParser) -> bool:
         or "film program" in line
         for line in lines
     )
+
+
+def ucla_event_url_date(page_url: str) -> datetime | None:
+    """Read UCLA's canonical event date from its dated event slug when present."""
+
+    match = UCLA_EVENT_URL_DATE_RE.search(urlsplit(page_url).path)
+    if not match:
+        return None
+    try:
+        return datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)), tzinfo=LA_TZ)
+    except ValueError:
+        return None
+
+
+def prioritize_ucla_event_urls(urls: Iterable[str], now: datetime) -> list[str]:
+    """Prefer future dated event URLs before an unbounded historic sitemap."""
+
+    current_date = as_la(now).date()
+    unique_urls = list(dict.fromkeys(urls))
+    ranked: list[tuple[int, datetime, int, str]] = []
+    for index, page_url in enumerate(unique_urls):
+        event_date = ucla_event_url_date(page_url)
+        if event_date and event_date.date() < current_date:
+            continue
+        # Dated events are ordered chronologically; non-dated URLs remain as
+        # a bounded fallback after them because their schedule cannot be
+        # inferred from the URL alone.
+        ranked.append((0 if event_date else 1, event_date or datetime.max.replace(tzinfo=LA_TZ), index, page_url))
+    ranked.sort(key=lambda value: value[:3])
+    return [page_url for _, _, _, page_url in ranked]
 
 
 def parse_ucla_event(html: str, page_url: str, now: datetime | None = None) -> dict | None:
@@ -2600,14 +2722,15 @@ def parse_ucla_event(html: str, page_url: str, now: datetime | None = None) -> d
     )
     if not title:
         return None
-    dates = parse_ucla_datetime_candidates(parser, current)
+    event_lines = primary_event_lines(parser.lines)
+    dates = parse_ucla_datetime_candidates(parser, current, event_lines)
     if not dates:
         return None
     venue = next(
-        (line for line in parser.lines if "theater" in normalize_key(line) or "theatre" in normalize_key(line)),
+        (line for line in event_lines if "theater" in normalize_key(line) or "theatre" in normalize_key(line)),
         "Billy Wilder Theater",
     )
-    lines_text = " ".join(parser.lines)
+    lines_text = " ".join(event_lines)
     formats = []
     for token in re.findall(r"\b(?:35|70|16)mm\b|\b(?:DCP|Digital|Video)\b", lines_text, re.I):
         normalized = token.upper() if token.upper() in {"DCP", "DIGITAL", "VIDEO"} else token.lower()
@@ -2615,7 +2738,7 @@ def parse_ucla_event(html: str, page_url: str, now: datetime | None = None) -> d
             formats.append(normalized)
     notes = " · ".join(
         dict.fromkeys(
-            line for line in parser.lines
+            line for line in event_lines
             if any(marker in normalize_key(line) for marker in ("in person", "presented by", "free admission", "first come"))
         )
     )[:220]
@@ -2630,7 +2753,7 @@ def parse_ucla_event(html: str, page_url: str, now: datetime | None = None) -> d
         venue=venue,
         year=first_label_value(parser.lines, ("Year", "Release year")),
         format_name=" / ".join(formats),
-        synopsis=" ".join(parser.lines[1:])[:520],
+        synopsis=" ".join(event_lines[1:])[:520],
         notes=notes,
         image=(absolute_images(parser, page_url) or [""])[0],
         source_page_url=UCLA_EVENTS_URL,
@@ -3250,7 +3373,7 @@ def _scrape_academy_museum(current: datetime, fetcher: CachedFetcher, force: boo
     errors: list[str] = []
     warnings: list[str] = []
     event_urls: list[str] = []
-    calendar_queue = [ACADEMY_CALENDAR_URL]
+    calendar_queue = [ACADEMY_CALENDAR_URL, ACADEMY_CALENDAR_FALLBACK_URL]
     seen_calendar: set[str] = set()
     pages_checked = 0
 
@@ -3265,7 +3388,10 @@ def _scrape_academy_museum(current: datetime, fetcher: CachedFetcher, force: boo
         try:
             html, checked_at, _ = fetcher.fetch(page_url, force=force)
         except Exception as error:
-            errors.append(f"{page_url}: {error}")
+            # The official calendar is client-rendered on some deployments.
+            # Its failure should not make the source unavailable when the
+            # public series pages below still provide a usable detail graph.
+            warnings.append(f"{page_url}: {error}")
             continue
         pages_checked += 1
         event_urls.extend(discover_academy_event_urls(html, page_url))
@@ -3273,28 +3399,31 @@ def _scrape_academy_museum(current: datetime, fetcher: CachedFetcher, force: boo
             if traversal_url not in seen_calendar and traversal_url not in calendar_queue:
                 calendar_queue.append(traversal_url)
 
-    # The calendar is client-rendered on some deployments. Its public Films
-    # index and current series pages expose the same Screening detail graph;
-    # use them only when the filtered calendar yielded no detail URLs.
-    if not event_urls:
-        try:
-            films_html, films_checked_at, _ = fetcher.fetch(ACADEMY_FILMS_URL, force=force)
-            checked_at = films_checked_at or checked_at
-            pages_checked += 1
-            series_urls = discover_academy_series_urls(films_html, ACADEMY_FILMS_URL)
-            series_results = parallel_fetch(fetcher, series_urls, force=force, max_workers=8)
-            pages_checked += len(series_urls)
-            for series_url in series_urls:
-                result = series_results.get(series_url)
-                if isinstance(result, Exception) or not result:
-                    if isinstance(result, Exception):
-                        warnings.append(f"{series_url}: {result}")
-                    continue
-                series_html, series_checked_at, _ = result
-                checked_at = series_checked_at or checked_at
-                event_urls.extend(discover_academy_event_urls(series_html, series_url))
-        except Exception as error:
-            errors.append(f"{ACADEMY_FILMS_URL}: {error}")
+    # The calendar and Films index are client-rendered on some deployments.
+    # Always traverse known server-rendered series pages as well as series
+    # discovered from Films: a partially rendered calendar must not suppress
+    # the fallback graph and hide all other current screenings.
+    series_urls = list(ACADEMY_SERIES_SEED_URLS)
+    try:
+        films_html, films_checked_at, _ = fetcher.fetch(ACADEMY_FILMS_URL, force=force)
+        checked_at = films_checked_at or checked_at
+        pages_checked += 1
+        series_urls.extend(discover_academy_series_urls(films_html, ACADEMY_FILMS_URL))
+    except Exception as error:
+        warnings.append(f"{ACADEMY_FILMS_URL}: {error}")
+
+    series_urls = list(dict.fromkeys(series_urls))[:DEFAULT_MAX_DETAIL_EVENTS]
+    series_results = parallel_fetch(fetcher, series_urls, force=force, max_workers=8)
+    for series_url in series_urls:
+        result = series_results.get(series_url)
+        if isinstance(result, Exception) or not result:
+            if isinstance(result, Exception):
+                warnings.append(f"{series_url}: {result}")
+            continue
+        series_html, series_checked_at, _ = result
+        pages_checked += 1
+        checked_at = series_checked_at or checked_at
+        event_urls.extend(discover_academy_event_urls(series_html, series_url))
 
     if not event_urls:
         sitemap_queue = list(ACADEMY_SITEMAP_URLS)
@@ -3334,6 +3463,10 @@ def _scrape_academy_museum(current: datetime, fetcher: CachedFetcher, force: boo
             warnings.append(f"{page_url}: Screening page had no future date/time")
 
     events = deduplicate_events(events)
+    if not events and pages_checked:
+        warnings.append("No future Academy screenings with explicit showtimes found")
+    if not pages_checked:
+        errors.append("No Academy Museum source pages could be reached")
     source = {
         "id": "academy-museum",
         "name": "Academy Museum of Motion Pictures",
@@ -3341,7 +3474,7 @@ def _scrape_academy_museum(current: datetime, fetcher: CachedFetcher, force: boo
         "url": ACADEMY_CALENDAR_URL,
         "adapter": "academy_museum",
         "lastChecked": checked_at,
-        "status": "verified" if events and not errors else ("degraded" if events else "error"),
+        "status": "verified" if not errors and pages_checked else ("degraded" if pages_checked or events else "error"),
         "eventCount": len(events),
         "pagesChecked": pages_checked + len(unique_event_urls),
         "durationMs": int((time.monotonic() - started) * 1000),
@@ -3572,7 +3705,10 @@ def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: 
                             sitemap_queue.append(child_url)
                 except Exception as error:
                     warnings.append(f"{sitemap_url}: {error}")
-        event_urls = list(dict.fromkeys(event_urls))[:DEFAULT_MAX_AC_EVENTS]
+        # The sitemap contains years of archival event pages. UCLA's dated
+        # slugs let us skip historical entries and fetch upcoming pages first,
+        # rather than exhausting the bounded detail budget on old listings.
+        event_urls = prioritize_ucla_event_urls(event_urls, current)[:DEFAULT_MAX_AC_EVENTS]
         results = parallel_fetch(fetcher, event_urls, force=force, max_workers=16)
         for page_url in event_urls:
             result = results.get(page_url)
@@ -3588,10 +3724,14 @@ def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: 
                 event["sourceLastChecked"] = page_checked_at or checked_at
                 events.append(event)
         if not event_urls:
-            errors.append("Events index: no event pages discovered")
+            warnings.append("Events index: no future event pages discovered")
     except Exception as error:
         errors.append(f"UCLA Film & Television Archive: {error}")
     events = deduplicate_events(events)
+    if not events and pages_checked:
+        warnings.append("No future UCLA screenings with explicit showtimes found")
+    if not pages_checked:
+        errors.append("No UCLA Film & Television Archive source pages could be reached")
     source = {
         "id": "ucla-film-archive",
         "name": "UCLA Film & Television Archive",
@@ -3600,7 +3740,7 @@ def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: 
         "adapter": "ucla_film_archive",
         "required": False,
         "lastChecked": checked_at,
-        "status": "verified" if events and not errors else ("degraded" if events else "error"),
+        "status": "verified" if not errors and pages_checked else ("degraded" if pages_checked or events else "error"),
         "eventCount": len(events),
         "pagesChecked": pages_checked,
         "durationMs": int((time.monotonic() - started) * 1000),
