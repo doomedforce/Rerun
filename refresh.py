@@ -17,10 +17,10 @@ from scraper import LA_TZ, SOURCE_REGISTRY, VENUE_CATALOG, scrape_los_angeles
 
 
 ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.environ.get("RERUN_DATA_DIR") or ROOT / "data").expanduser().resolve()
 REFRESH_TTL_SECONDS = int(os.environ.get("RERUN_REFRESH_TTL_SECONDS", "1800"))
 RETRY_BACKOFF_SECONDS = int(os.environ.get("RERUN_REFRESH_RETRY_SECONDS", "600"))
-FEED_POLICY_VERSION = 16
+FEED_POLICY_VERSION = 18
 LOCK_PATH = DATA_DIR / ".refresh.lock"
 
 
@@ -74,6 +74,31 @@ def load_refresh_meta() -> dict:
     return read_json("last-refresh.json", {})
 
 
+def last_verified_meta() -> dict:
+    """Return the newest genuinely verified catalog metadata, if any.
+
+    The packaged seed data is deliberately not considered a verified catalog.
+    That distinction prevents a fresh deploy from quietly presenting an old
+    bundled feed as if it had been checked against the live official sources.
+    """
+
+    verified_snapshot = read_json("last-verified-snapshot.json", {})
+    current_snapshot = read_json("snapshot.json", {})
+    candidates = [
+        verified_snapshot.get("meta", {}) if isinstance(verified_snapshot, dict) else {},
+        current_snapshot.get("meta", {}) if isinstance(current_snapshot, dict) else {},
+        read_json("last-refresh.json", {}),
+    ]
+    for meta in candidates:
+        if not isinstance(meta, dict):
+            continue
+        if meta.get("lastVerifiedAt"):
+            return meta
+        if meta.get("status") == "ok" and meta.get("lastRefresh"):
+            return meta
+    return {}
+
+
 def refresh_is_stale(meta: dict | None = None, now: datetime | None = None, force: bool = False) -> bool:
     if force:
         return True
@@ -118,7 +143,26 @@ def official_venues() -> list[dict]:
 def _refresh_los_angeles(now: datetime | None = None, force: bool = False) -> dict:
     started = utc_now()
     result = scrape_los_angeles(now=now or started.astimezone(LA_TZ), force=force)
-    existing = read_json("screenings.json", [])
+    prior_verified_snapshot = read_json("last-verified-snapshot.json", {})
+    if not isinstance(prior_verified_snapshot, dict):
+        prior_verified_snapshot = {}
+    legacy_snapshot = read_json("snapshot.json", {})
+    legacy_meta = legacy_snapshot.get("meta", {}) if isinstance(legacy_snapshot, dict) else {}
+    if (
+        not isinstance(prior_verified_snapshot.get("screenings"), list)
+        and isinstance(legacy_snapshot, dict)
+        and isinstance(legacy_snapshot.get("screenings"), list)
+        and isinstance(legacy_meta, dict)
+        and legacy_meta.get("status") == "ok"
+    ):
+        # One-time in-place migration for catalogs created before the dedicated
+        # last-verified snapshot existed. Seed data never qualifies here.
+        prior_verified_snapshot = legacy_snapshot
+    prior_verified_meta = last_verified_meta()
+    prior_verified_screenings = prior_verified_snapshot.get("screenings", [])
+    existing = read_json("screenings.json", prior_verified_screenings)
+    if not isinstance(existing, list):
+        existing = prior_verified_screenings if isinstance(prior_verified_screenings, list) else []
     existing_non_la = [item for item in existing if item.get("city") != "los-angeles"]
     events = result.get("screenings", [])
     sources = result.get("sources", [])
@@ -132,27 +176,24 @@ def _refresh_los_angeles(now: datetime | None = None, force: bool = False) -> di
     source_errors = list(result.get("blockingErrors", result.get("errors", [])))
     optional_errors = list(result.get("optionalErrors", []))
 
-    # A transient outage must not wipe the last known-good records. If at least
-    # one source returned events, replace the LA slice and mark the feed
-    # degraded so the UI can be honest about partial coverage.
-    wrote_events = bool(events) or (
+    verified = (
         required_source_count > 0
         and successful_required_sources == required_source_count
         and not source_errors
     )
-    if wrote_events:
+
+    # Never replace a verified catalog with a partial required-source crawl.
+    # On an outage, preserve the separately stored last verified catalog and
+    # expose current source diagnostics in the snapshot metadata instead.
+    if verified:
         merged = sorted(existing_non_la + events, key=lambda item: item.get("startAt", ""))
         write_json("screenings.json", merged)
         write_json("venues.json", official_venues())
     else:
-        merged = existing
+        merged = prior_verified_screenings if isinstance(prior_verified_screenings, list) else existing
 
     checked_at = result.get("checkedAt") or utc_now().isoformat().replace("+00:00", "Z")
-    if (
-        required_source_count > 0
-        and successful_required_sources == required_source_count
-        and not source_errors
-    ):
+    if verified:
         status = "ok"
     elif events:
         status = "degraded"
@@ -165,36 +206,42 @@ def _refresh_los_angeles(now: datetime | None = None, force: bool = False) -> di
         "durationMs": int((utc_now() - started).total_seconds() * 1000),
         "status": status,
         "feedPolicyVersion": FEED_POLICY_VERSION,
-        "mode": "live" if wrote_events else "stale",
+        "mode": "live" if verified else ("last-verified" if prior_verified_meta else "unverified"),
         "stale": status != "ok",
         "sourceCount": source_count,
         "requiredSourceCount": required_source_count,
         "verifiedSourceCount": successful_sources,
         "verifiedRequiredSourceCount": successful_required_sources,
-        "eventCount": len(events) if wrote_events else len([item for item in merged if item.get("city") == "los-angeles"]),
+        "eventCount": len(events) if verified else len([item for item in merged if item.get("city") == "los-angeles"]),
         "errors": source_errors[:10],
         "optionalErrors": optional_errors[:10],
         "networkRequests": result.get("networkRequests", 0),
         "cacheHits": result.get("cacheHits", 0),
     }
+    if verified:
+        meta["lastVerifiedAt"] = checked_at
+    elif prior_verified_meta.get("lastVerifiedAt"):
+        meta["lastVerifiedAt"] = prior_verified_meta["lastVerifiedAt"]
+    elif prior_verified_meta.get("status") == "ok" and prior_verified_meta.get("lastRefresh"):
+        meta["lastVerifiedAt"] = prior_verified_meta["lastRefresh"]
     if status != "ok":
         meta["nextRetryAt"] = (utc_now() + timedelta(seconds=RETRY_BACKOFF_SECONDS)).isoformat().replace("+00:00", "Z")
     write_json("sources.json", result.get("sources", []))
     write_json("last-refresh.json", meta)
-    write_json(
-        "snapshot.json",
-        {
-            "schemaVersion": 1,
-            "catalogVersion": checked_at,
-            "generatedAt": utc_now().isoformat().replace("+00:00", "Z"),
-            "verified": status == "ok",
-            "screenings": merged,
-            "venues": official_venues(),
-            "sources": result.get("sources", []),
-            "meta": meta,
-        },
-    )
-    return {**result, "meta": meta, "wroteEvents": wrote_events}
+    snapshot = {
+        "schemaVersion": 2,
+        "catalogVersion": checked_at,
+        "generatedAt": utc_now().isoformat().replace("+00:00", "Z"),
+        "verified": verified,
+        "screenings": merged,
+        "venues": official_venues() if verified else prior_verified_snapshot.get("venues", official_venues()),
+        "sources": result.get("sources", []),
+        "meta": meta,
+    }
+    write_json("snapshot.json", snapshot)
+    if verified:
+        write_json("last-verified-snapshot.json", snapshot)
+    return {**result, "meta": meta, "wroteEvents": verified}
 
 
 def refresh_los_angeles(now: datetime | None = None, force: bool = False) -> dict:

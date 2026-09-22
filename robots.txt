@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://rerun-lsyq.onrender.com/sitemap.xml

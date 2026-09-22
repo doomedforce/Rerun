@@ -31,6 +31,7 @@ body::selection { background: var(--gold); color: var(--night); }
 a { color: inherit; text-decoration: none; }
 button, input, select { font: inherit; color: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
 .sr-only {
   position: absolute;
   width: 1px;
@@ -272,6 +273,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .data-status { color: var(--gold); }
 .feed-health { display: flex; align-items: center; gap: .7rem; min-width: 0; }
 .data-status[data-tone="fallback"] { color: var(--red); }
+.data-status[data-tone="stale"] { color: var(--gold); }
 .refresh-button {
   display: inline-flex;
   align-items: center;
@@ -387,6 +389,10 @@ button { -webkit-tap-highlight-color: transparent; }
 .about-points span:nth-child(3) { background: var(--red); color: var(--paper); border-color: var(--red); }
 .image-note { font: 400 .55rem / 1.5 var(--mono); color: var(--smoke); max-width: 560px; margin-top: 1.8rem; }
 .image-note a { color: var(--gold); text-decoration: underline; text-underline-offset: 3px; }
+.source-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .45rem .8rem; list-style: none; padding: 0; margin: 1rem 0 0; max-width: 620px; }
+.source-list li { min-width: 0; }
+.source-list a { display: block; border: 1px solid var(--line); color: var(--paper-dim); padding: .5rem .6rem; font: 400 .52rem var(--mono); text-transform: uppercase; line-height: 1.25; transition: border-color .2s, color .2s, background .2s; }
+.source-list a:hover, .source-list a:focus-visible { border-color: var(--gold); color: var(--night); background: var(--gold); outline: 0; }
 
 .newsletter { padding: clamp(4rem, 8vw, 8rem) var(--pad); display: grid; grid-template-columns: 1fr 1fr; gap: 4rem; background: var(--blue); color: var(--paper); }
 .newsletter h2 { font-size: clamp(3.6rem, 6vw, 6.2rem); }
@@ -398,6 +404,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .email-field input::placeholder { color: rgba(243, 234, 216, .52); }
 .email-field button { border: 0; background: none; color: var(--gold); cursor: pointer; font-size: 1.5rem; }
 .newsletter small { display: block; margin-top: .8rem; color: var(--gold); font: 400 .56rem var(--mono); min-height: 1.2em; }
+.honeypot { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
 
 dialog { border: 1px solid var(--line-strong); padding: 0; max-width: min(720px, calc(100% - 2rem)); width: 100%; background: var(--panel); color: var(--paper); box-shadow: 0 30px 80px rgba(0, 0, 0, .7); }
 dialog::backdrop { background: rgba(0, 0, 0, .78); backdrop-filter: blur(8px); }
@@ -477,6 +484,7 @@ footer a { color: var(--gold); }
   .card-poster { aspect-ratio: 1.05; }
   .save-banner h2 { font-size: 3.9rem; }
   .about-grid { margin-top: 3rem; }
+  .source-list { grid-template-columns: 1fr; }
   .newsletter form { margin: 2rem 0 0; }
   .dialog-poster { min-height: 240px; }
   .dialog-info h2 { font-size: 2.3rem; }

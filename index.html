@@ -6,17 +6,30 @@
   <meta name="color-scheme" content="dark" />
   <meta name="theme-color" content="#080807" />
   <meta name="description" content="Rerun helps you find verified repertory film screenings in Los Angeles." />
-  <meta name="rerun-build" content="2026-09-09-planning-filters" />
+  <meta name="robots" content="index,follow" />
+  <meta name="rerun-build" content="2026-09-22-launch" />
   <title>Rerun — Find the next great screening.</title>
-  <link rel="icon" href="/favicon.svg?v=20260909-pwa-icons" type="image/svg+xml" />
-  <link rel="alternate icon" href="/assets/rerun-mark.png?v=20260909-pwa-icons" type="image/png" />
-  <link rel="apple-touch-icon" href="/assets/rerun-mark.png?v=20260909-pwa-icons" />
-  <link rel="manifest" href="/manifest.json?v=20260909-pwa-icons" />
+  <link rel="canonical" href="https://rerun-lsyq.onrender.com/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Rerun" />
+  <meta property="og:title" content="Rerun — Find the next great screening." />
+  <meta property="og:description" content="Verified repertory film screenings across Los Angeles." />
+  <meta property="og:url" content="https://rerun-lsyq.onrender.com/" />
+  <meta property="og:image" content="https://rerun-lsyq.onrender.com/assets/rerun-mark.png?v=20260922-launch" />
+  <meta property="og:image:alt" content="Rerun repertory film guide mark" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Rerun — Find the next great screening." />
+  <meta name="twitter:description" content="Verified repertory film screenings across Los Angeles." />
+  <meta name="twitter:image" content="https://rerun-lsyq.onrender.com/assets/rerun-mark.png?v=20260922-launch" />
+  <link rel="icon" href="/favicon.svg?v=20260922-launch" type="image/svg+xml" />
+  <link rel="alternate icon" href="/assets/rerun-mark.png?v=20260922-launch" type="image/png" />
+  <link rel="apple-touch-icon" href="/assets/rerun-mark.png?v=20260922-launch" />
+  <link rel="manifest" href="/manifest.json?v=20260922-launch" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght,SOFT,WONK@9..144,400..700,0..100,0..1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260909-planning-filters" />
-  <script src="/app.js?v=20260909-planning-filters" defer></script>
+  <link rel="stylesheet" href="styles.css?v=20260922-launch" />
+  <script src="/app.js?v=20260922-launch" defer></script>
 </head>
 <body>
   <div class="grain" aria-hidden="true"></div>
@@ -57,7 +70,7 @@
         <div class="day-navigator" aria-label="Choose screening day"><button class="day-arrow" type="button" id="day-prev" aria-label="Previous day">←</button><div class="day-label"><span class="eyebrow" id="day-kicker">Today</span><strong id="day-label">Loading date</strong></div><button class="day-arrow" type="button" id="day-next" aria-label="Next day">→</button><a class="calendar-button" href="calendar.html">Calendar <span>↗</span></a></div>
       </div>
       <div class="date-filters" role="group" aria-label="Quick date filters"><button class="date-filter active" type="button" data-date-filter="today" aria-pressed="true">Tonight</button><button class="date-filter" type="button" data-date-filter="tomorrow" aria-pressed="false">Tomorrow</button><button class="date-filter" type="button" data-date-filter="weekend" aria-pressed="false">This weekend</button><button class="date-filter" type="button" data-date-filter="upcoming" aria-pressed="false">All upcoming</button></div>
-      <div class="listing-meta"><p id="result-count">0 screenings</p><div class="feed-health"><span class="data-status" id="data-status" role="status" aria-live="polite">Waiting for complete live index…</span></div></div>
+      <div class="listing-meta"><p id="result-count">0 screenings</p><div class="feed-health"><span class="data-status" id="data-status" role="status" aria-live="polite">Checking official listings…</span></div></div>
       <div class="screening-grid" id="screening-grid" aria-live="polite"></div>
       <div class="calendar-view" id="calendar-view" hidden>
         <div class="calendar-heading">
@@ -74,22 +87,22 @@
 
     <section class="save-banner">
       <div><span class="eyebrow">Your watchlist</span><h2>Never miss<br>the <em>rerun.</em></h2></div>
-      <p>Save a film or venue and Rerun will keep your next screening easy to find.</p>
-      <button class="outline-button" type="button" data-view="saved">View saved films <span>↗</span></button>
+      <p>Save a screening and keep your next night at the movies easy to find.</p>
+      <button class="outline-button" type="button" data-view="saved">View saved screenings <span>↗</span></button>
     </section>
 
     <section class="about" id="about" aria-labelledby="about-title">
       <div class="eyebrow">02 / About Rerun</div>
-      <div class="about-grid"><h2 id="about-title">A better way to<br><em>go see a movie.</em></h2><div><p class="about-lead">The films worth leaving the house for are often the hardest to find.</p><p>Rerun brings repertory programs, revival screenings, filmmaker series, and local cinema calendars into one calm, useful place. No endless venue tabs. No discovering the perfect screening after it already happened.</p><div class="about-points"><span>01 / Nearby first</span><span>02 / Film-led</span><span>03 / Built for plans</span></div><p class="image-note">Los Angeles is the first live market. Listings are checked against official <a href="https://www.americancinematheque.com/now-showing/" target="_blank" rel="noopener noreferrer">American Cinematheque</a>, <a href="https://ticketing.uswest.veezi.com/sessions/?siteToken=fmtswb0qqbym3de6c4bbsqj89m" target="_blank" rel="noopener noreferrer">New Beverly</a>, <a href="https://www.vistatheaterhollywood.com/schedule/" target="_blank" rel="noopener noreferrer">Vista Theater Hollywood</a>, and <a href="https://vidiotsfoundation.org/coming-soon/" target="_blank" rel="noopener noreferrer">Vidiots</a> program pages. If Vidiots' official page is unavailable, Rerun may show a clearly marked <a href="https://la.teentix.org/venues/vidiots/" target="_blank" rel="noopener noreferrer">TeenTix LA partner listing</a> instead. Always verify showtime, ticket availability, and image rights on the venue page before you go.</p></div></div>
+      <div class="about-grid"><h2 id="about-title">A better way to<br><em>go see a movie.</em></h2><div><p class="about-lead">The films worth leaving the house for are often the hardest to find.</p><p>Rerun brings repertory programs, revival screenings, filmmaker series, and local cinema calendars into one calm, useful place. No endless venue tabs. No discovering the perfect screening after it already happened.</p><div class="about-points"><span>01 / Nearby first</span><span>02 / Film-led</span><span>03 / Built for plans</span></div><p class="image-note">Los Angeles is the first live market. Every listing links back to its source.</p><ul class="source-list" aria-label="Official screening sources"><li><a href="https://www.americancinematheque.com/now-showing/" target="_blank" rel="noopener noreferrer">American Cinematheque</a></li><li><a href="https://ticketing.uswest.veezi.com/sessions/?siteToken=fmtswb0qqbym3de6c4bbsqj89m" target="_blank" rel="noopener noreferrer">New Beverly Cinema</a></li><li><a href="https://www.vistatheaterhollywood.com/schedule/" target="_blank" rel="noopener noreferrer">Vista Theater Hollywood</a></li><li><a href="https://vidiotsfoundation.org/coming-soon/" target="_blank" rel="noopener noreferrer">Vidiots</a></li><li><a href="https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O" target="_blank" rel="noopener noreferrer">Academy Museum</a></li><li><a href="https://ticketing.uswest.veezi.com/sessions/?siteToken=tez3prscsvfbagchhkxbevjwk8" target="_blank" rel="noopener noreferrer">Fine Arts Theatre</a></li><li><a href="https://www.lafilmforum.org/schedule/" target="_blank" rel="noopener noreferrer">Los Angeles Filmforum</a></li><li><a href="https://www.oldtownmusichall.org/home/" target="_blank" rel="noopener noreferrer">Old Town Music Hall</a></li><li><a href="https://www.cinema.ucla.edu/events/" target="_blank" rel="noopener noreferrer">UCLA Film &amp; Television Archive</a></li></ul><p class="image-note">If Vidiots’ official page is unavailable, Rerun may show a clearly marked <a href="https://la.teentix.org/venues/vidiots/" target="_blank" rel="noopener noreferrer">TeenTix LA partner listing</a>. Always confirm showtime, ticket availability, and image rights on the venue page before you go.</p></div></div>
     </section>
 
-    <section class="newsletter" aria-labelledby="newsletter-title"><div><span class="eyebrow">03 / Stay in the loop</span><h2 id="newsletter-title">A good film<br>is worth an <em>alert.</em></h2></div><form id="newsletter-form"><label for="email">Get the best screenings in your inbox.</label><div class="email-field"><input id="email" type="email" placeholder="you@example.com" required /><button type="submit" aria-label="Subscribe">↗</button></div><small id="form-message" role="status"></small></form></section>
+    <section class="newsletter" aria-labelledby="newsletter-title"><div><span class="eyebrow">03 / Stay in the loop</span><h2 id="newsletter-title">A good film<br>is worth an <em>alert.</em></h2></div><form id="newsletter-form"><label for="email">Join the Rerun list for occasional guide updates.</label><div class="email-field"><input id="email" name="email" type="email" placeholder="you@example.com" autocomplete="email" required /><button type="submit" aria-label="Join the Rerun list">↗</button></div><label class="honeypot" for="website">Leave this field blank<input id="website" name="website" type="text" tabindex="-1" autocomplete="off" /></label><small id="form-message" role="status"></small></form></section>
   </main>
 
   <dialog id="screening-dialog"><button class="dialog-close" type="button" aria-label="Close screening details">×</button><div id="dialog-content"></div></dialog>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <footer><span class="footer-brand"><svg class="footer-mark" viewBox="0 0 52 52" aria-hidden="true"><path fill="#E4B65A" d="M6 5h10v42H6z"/><path fill="#E4B65A" d="M16 5h15c8.8 0 14.5 4.5 14.5 11.5 0 5-3 8.9-8.2 10.7L47 47H35.7l-9-16.4H16V22h9.5c4.1 0 6.5-1.7 6.5-5s-2.4-5-6.5-5H16z"/><path fill="#E65334" d="M16 12h9.5c4.1 0 6.5 1.7 6.5 5 0 1.8-.8 3.1-2.2 4.1H16z"/><path fill="#E65334" d="M27 30h8.7L47 47H35.7z"/><g fill="#080807"><rect x="8" y="8" width="6" height="4" rx="1"/><rect x="8" y="16" width="6" height="4" rx="1"/><rect x="8" y="24" width="6" height="4" rx="1"/><rect x="8" y="32" width="6" height="4" rx="1"/><rect x="8" y="40" width="6" height="4" rx="1"/></g></svg><span>Rerun® / A product concept by Ameer Hassan</span></span><a class="instagram-link" href="https://www.instagram.com/1rerun/" target="_blank" rel="noopener noreferrer" aria-label="Follow Rerun on Instagram"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"></rect><circle cx="12" cy="12" r="4"></circle><circle cx="17.5" cy="6.8" r="1"></circle></svg><span>Instagram</span></a><span>Curated for the big screen</span><a href="#top">Back to top ↑</a></footer>
 
-  <template id="screening-card-template"><article class="screening-card"><div class="card-poster"><img class="poster-image" alt="" loading="lazy" /><span class="poster-kicker"></span><button class="poster-title title-action" type="button"></button><small class="poster-format"></small><button class="save-button" type="button" aria-label="Save screening"><span>♡</span></button></div><div class="card-body"><div class="card-heading"><div><h3><button class="film-title title-action" type="button"></button></h3><p class="film-meta"></p></div><span class="distance"></span></div><div class="card-showing"><span class="showing-date"></span><strong class="showing-time"></strong><span class="showing-venue"></span></div><a class="source-label" title="" target="_blank" rel="noopener noreferrer"></a><div class="card-actions"><button class="save-screening-button" type="button" aria-pressed="false"><span class="save-text-label">Save</span><span class="save-text-icon" aria-hidden="true">♡</span></button><button class="details-button" type="button">View details <span>↗</span></button><a class="ticket-link" target="_blank" rel="noopener noreferrer">Tickets <span>↗</span></a></div><div class="saved-actions" hidden><button class="card-quick-button calendar-card-button" type="button">Add to calendar ↓</button><button class="card-quick-button share-card-button" type="button">Share ↗</button></div></div></article></template>
+  <template id="screening-card-template"><article class="screening-card"><div class="card-poster"><img class="poster-image" alt="" loading="lazy" /><span class="poster-kicker"></span><button class="poster-title title-action" type="button"></button><small class="poster-format"></small><button class="save-button" type="button" aria-label="Save screening"><span>♡</span></button></div><div class="card-body"><div class="card-heading"><div><h3><button class="film-title title-action" type="button"></button></h3><p class="film-meta"></p></div><span class="distance"></span></div><div class="card-showing"><span class="showing-date"></span><strong class="showing-time"></strong><span class="showing-venue"></span></div><a class="source-label" title="" target="_blank" rel="noopener noreferrer"></a><div class="card-actions"><button class="save-screening-button" type="button" aria-pressed="false"><span class="save-text-label">Save</span><span class="save-text-icon" aria-hidden="true">♡</span></button><button class="details-button" type="button">Details <span>↗</span></button><a class="ticket-link" target="_blank" rel="noopener noreferrer">Tickets &amp; details <span>↗</span></a></div><div class="saved-actions" hidden><button class="card-quick-button calendar-card-button" type="button">Add to calendar ↓</button><button class="card-quick-button share-card-button" type="button">Share ↗</button></div></div></article></template>
 </body>
 </html>

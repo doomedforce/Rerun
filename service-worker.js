@@ -1,5 +1,5 @@
-const CACHE_NAME = 'rerun-shell-v32';
-const SHELL = ['./', './index.html', './calendar.html', './styles.css?v=20260909-planning-filters', './app.js?v=20260909-planning-filters', './manifest.json?v=20260909-pwa-icons', './favicon.svg?v=20260909-pwa-icons', './app-icon.svg?v=20260909-pwa-icons', './assets/rerun-mark.png?v=20260909-pwa-icons', './assets/rerun-logo.png?v=20260909-mobile-logo', './data/screenings.json', './data/venues.json'];
+const CACHE_NAME = 'rerun-shell-v33';
+const SHELL = ['./', './index.html', './calendar.html', './styles.css?v=20260922-launch', './app.js?v=20260922-launch', './manifest.json?v=20260922-launch', './favicon.svg?v=20260922-launch', './app-icon.svg?v=20260922-launch', './assets/rerun-mark.png?v=20260922-launch', './assets/rerun-logo.png?v=20260922-launch'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then(async (cache) => {

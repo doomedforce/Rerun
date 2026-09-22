@@ -6,7 +6,7 @@ const path = require('node:path');
 const { URL } = require('node:url');
 
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, 'data');
+const DATA_DIR = path.resolve(process.env.RERUN_DATA_DIR || path.join(ROOT, 'data'));
 // Render supplies PORT and requires a public 0.0.0.0 bind. Hosted settings
 // must win over local-development overrides that may be present in the env.
 const HOST = process.env.PORT ? '0.0.0.0' : (process.env.RERUN_HOST || '0.0.0.0');
@@ -22,13 +22,16 @@ const MIME_TYPES = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
-  '.ico': 'image/x-icon'
+  '.ico': 'image/x-icon',
+  '.xml': 'application/xml; charset=utf-8'
 };
 
-const BLOCKED_STATIC = new Set(['/server.js', '/server.py', '/scraper.py', '/refresh.py', '/refresh_worker.py', '/alerts.py', '/instagram_publisher.py', '/package.json', '/README.md', '/data/subscribers.json', '/data/rerun.sqlite3', '/data/rerun.sqlite3-shm', '/data/rerun.sqlite3-wal', '/data/sources.json', '/data/last-refresh.json', '/data/snapshot.json', '/data/worker-state.json', '/data/instagram-post-state.json']);
+const BLOCKED_STATIC = new Set(['/server.js', '/server.py', '/scraper.py', '/refresh.py', '/refresh_worker.py', '/alerts.py', '/instagram_publisher.py', '/package.json', '/README.md', '/data/subscribers.json', '/data/screenings.json', '/data/venues.json', '/data/rerun.sqlite3', '/data/rerun.sqlite3-shm', '/data/rerun.sqlite3-wal', '/data/sources.json', '/data/last-refresh.json', '/data/snapshot.json', '/data/last-verified-snapshot.json', '/data/worker-state.json', '/data/instagram-post-state.json']);
 const RETRY_BACKOFF_MS = Number(process.env.RERUN_REFRESH_RETRY_SECONDS || 600) * 1000;
-const FEED_POLICY_VERSION = 16;
+const FEED_POLICY_VERSION = 18;
 const REFRESH_TOKEN = process.env.RERUN_REFRESH_TOKEN || '';
+const NOTIFY_WINDOW_MS = Math.max(60, Number(process.env.RERUN_NOTIFY_WINDOW_SECONDS || 600)) * 1000;
+const NOTIFY_MAX_ATTEMPTS = Math.max(1, Number(process.env.RERUN_NOTIFY_MAX_ATTEMPTS || 5));
 const OPTIONAL_SOURCE_IDS = new Set(['new-beverly', 'vidiots', 'academy-museum', 'fine-arts-theatre', 'filmforum', 'old-town-music-hall', 'ucla-film-archive']);
 const IMAGE_CACHE = new Map();
 const IMAGE_CACHE_LIMIT = 64;
@@ -44,8 +47,16 @@ const IMAGE_ALLOWED_HOSTS = new Set([
 ]);
 let refreshInFlight = null;
 let refreshWorker = null;
+const notifyAttempts = new Map();
 
-const jsonHeaders = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'X-Frame-Options': 'DENY',
+  'Permissions-Policy': 'camera=(), geolocation=(), microphone=()',
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'self'; frame-ancestors 'none'"
+};
+const jsonHeaders = { ...SECURITY_HEADERS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
 
 async function readJson(fileName, fallback = []) {
   try {
@@ -62,8 +73,21 @@ async function writeJson(fileName, value) {
 }
 
 async function readCatalog() {
-  const snapshot = await readJson('snapshot.json', {});
-  if (snapshot && Array.isArray(snapshot.screenings)) return snapshot;
+  const currentSnapshot = await readJson('snapshot.json', {});
+  const snapshot = currentSnapshot && Array.isArray(currentSnapshot.screenings)
+    ? currentSnapshot
+    : await readJson('last-verified-snapshot.json', {});
+  if (snapshot && Array.isArray(snapshot.screenings)) {
+    const snapshotMeta = snapshot.meta && typeof snapshot.meta === 'object' ? snapshot.meta : {};
+    const operationalMeta = await readJson('last-refresh.json', {});
+    const meta = { ...snapshotMeta, ...(operationalMeta && typeof operationalMeta === 'object' ? operationalMeta : {}) };
+    if (snapshotMeta.lastVerifiedAt && !meta.lastVerifiedAt) meta.lastVerifiedAt = snapshotMeta.lastVerifiedAt;
+    return {
+      ...snapshot,
+      sources: await readJson('sources.json', snapshot.sources || []),
+      meta
+    };
+  }
   return {
     schemaVersion: 0,
     catalogVersion: null,
@@ -75,9 +99,13 @@ async function readCatalog() {
   };
 }
 
-function sendJson(response, status, payload) {
-  response.writeHead(status, jsonHeaders);
+function sendJson(response, status, payload, extraHeaders = {}) {
+  response.writeHead(status, { ...jsonHeaders, ...extraHeaders });
   response.end(JSON.stringify(payload));
+}
+
+function applySecurityHeaders(response) {
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) response.setHeader(name, value);
 }
 
 function imageHostAllowed(hostname) {
@@ -146,6 +174,39 @@ function feedIsComplete(refreshMeta = {}, sources = []) {
     && refreshMeta.status === 'ok'
     && verifiedRequired >= requiredSources.length
     && requiredSources.every((source) => source.status === 'verified');
+}
+
+function hasLastVerifiedSnapshot(catalog = {}) {
+  return Array.isArray(catalog.screenings) && Boolean(catalog.meta?.lastVerifiedAt);
+}
+
+function sourceHealth(sources = []) {
+  const required = sources.filter(sourceIsRequired);
+  return {
+    requiredCount: required.length,
+    verifiedRequiredCount: required.filter((source) => source.status === 'verified').length,
+    unavailableRequiredSources: required.filter((source) => source.status !== 'verified').map((source) => source.name).filter(Boolean),
+    degradedSources: sources.filter((source) => ['degraded', 'error'].includes(source.status)).map((source) => source.name).filter(Boolean)
+  };
+}
+
+function notificationClientKey(request) {
+  const forwarded = String(request.headers['x-forwarded-for'] || '').split(',', 1)[0].trim();
+  return forwarded || request.socket.remoteAddress || 'unknown';
+}
+
+function notificationAllowed(clientKey) {
+  const now = Date.now();
+  let [startedAt, count] = notifyAttempts.get(clientKey) || [now, 0];
+  if (now - startedAt >= NOTIFY_WINDOW_MS) [startedAt, count] = [now, 0];
+  if (count >= NOTIFY_MAX_ATTEMPTS) return false;
+  notifyAttempts.set(clientKey, [startedAt, count + 1]);
+  if (notifyAttempts.size > 1024) {
+    for (const [key, [started]] of notifyAttempts) {
+      if (now - started >= NOTIFY_WINDOW_MS) notifyAttempts.delete(key);
+    }
+  }
+  return true;
 }
 
 function refreshAuthorized(request) {
@@ -231,15 +292,17 @@ function runInstagramPublishCommand(force = false) {
   });
 }
 
-function feedMeta(city, data, venues, sources, refreshMeta) {
+function feedMeta(city, data, venues, sources, refreshMeta, servingLastVerifiedSnapshot = false) {
   return {
     count: data.length,
     city: city || null,
     updatedAt: new Date().toISOString(),
     lastRefresh: refreshMeta.lastRefresh || null,
+    lastVerifiedAt: refreshMeta.lastVerifiedAt || null,
     refreshStatus: refreshMeta.status || 'unknown',
     stale: Boolean(refreshMeta.stale ?? true),
     complete: feedIsComplete(refreshMeta, sources),
+    servingLastVerifiedSnapshot: Boolean(servingLastVerifiedSnapshot),
     source: 'Official venue feeds',
     sourceCount: sources.length,
     requiredSourceCount: Number(refreshMeta.requiredSourceCount) || sources.filter(sourceIsRequired).length,
@@ -253,7 +316,9 @@ function feedMeta(city, data, venues, sources, refreshMeta) {
       sourceMode: source.sourceMode || '',
       eventCount: source.eventCount || 0,
       lastChecked: source.lastChecked || null,
-      errors: (source.errors || []).slice(0, 2)
+      durationMs: source.durationMs || null,
+      errors: (source.errors || []).slice(0, 2),
+      warnings: (source.warnings || []).slice(0, 2)
     })),
     venueCount: venues.length
   };
@@ -290,6 +355,8 @@ async function handleApi(request, response, requestUrl) {
   if (request.method === 'GET' && pathname === '/api/health') {
     const catalog = await readCatalog();
     const refreshMeta = catalog.meta || {};
+    const sources = catalog.sources || [];
+    const complete = feedIsComplete(refreshMeta, sources);
     return sendJson(response, 200, {
       ok: true,
       service: 'rerun-api',
@@ -298,10 +365,14 @@ async function handleApi(request, response, requestUrl) {
       feed: {
         status: refreshMeta.status || 'unknown',
         lastRefresh: refreshMeta.lastRefresh || null,
+        lastVerifiedAt: refreshMeta.lastVerifiedAt || null,
         stale: Boolean(refreshMeta.stale ?? true),
-        complete: feedIsComplete(refreshMeta, catalog.sources || []),
-        catalogVersion: catalog.catalogVersion || null
+        complete,
+        servingLastVerifiedSnapshot: !complete && hasLastVerifiedSnapshot(catalog),
+        catalogVersion: catalog.catalogVersion || null,
+        sourceHealth: sourceHealth(sources)
       },
+      storage: { persistentStorageConfigured: Boolean(process.env.RERUN_DATA_DIR) },
       worker: await readJson('worker-state.json', { status: 'not_started' })
     });
   }
@@ -320,7 +391,9 @@ async function handleApi(request, response, requestUrl) {
     const screenings = catalog.screenings || [];
     const venues = catalog.venues || [];
     const sources = catalog.sources || [];
-    if ((city === '' || city === 'los-angeles') && !feedIsComplete(refreshMeta, sources)) {
+    const complete = feedIsComplete(refreshMeta, sources);
+    const servingLastVerifiedSnapshot = !complete && hasLastVerifiedSnapshot(catalog);
+    if ((city === '' || city === 'los-angeles') && !complete && !servingLastVerifiedSnapshot) {
       const retryAfterSeconds = Math.max(5, Math.min(900, Number(refreshMeta.retryAfterSeconds || 30)));
       return sendJson(response, 503, {
         error: 'complete_live_index_unavailable',
@@ -328,15 +401,17 @@ async function handleApi(request, response, requestUrl) {
         retryAfterSeconds,
         meta: feedMeta(city, [], venues, sources, refreshMeta),
         sources
-      });
+      }, { 'Retry-After': String(retryAfterSeconds) });
     }
     const date = normalize(requestUrl.searchParams.get('date'));
+    const dateKey = normalize(requestUrl.searchParams.get('dateKey'));
     const query = normalize(requestUrl.searchParams.get('q') || requestUrl.searchParams.get('query'));
     const format = normalize(requestUrl.searchParams.get('format'));
     const limit = Math.min(Math.max(Number(requestUrl.searchParams.get('limit') || 500), 1), 500);
     const data = screenings
       .filter((item) => !city || normalize(item.city) === city)
       .filter((item) => !Number.isFinite(Date.parse(item.startAt || '')) || Date.parse(item.startAt) >= Date.now())
+      .filter((item) => !dateKey || String(item.startAt || '').slice(0, 10) === dateKey)
       .filter((item) => !date || date === 'all' || normalize(item.dateGroup) === date)
       .filter((item) => !format || normalize(item.format).includes(format))
       .filter((item) => matchesQuery(item, query))
@@ -344,22 +419,33 @@ async function handleApi(request, response, requestUrl) {
       .slice(0, limit);
     return sendJson(response, 200, {
       data,
-      meta: feedMeta(city, data, venues, sources, refreshMeta)
+      meta: feedMeta(city, data, venues, sources, refreshMeta, servingLastVerifiedSnapshot)
     });
   }
 
   const screeningMatch = pathname.match(/^\/api\/screenings\/([^/]+)$/);
   if (request.method === 'GET' && screeningMatch) {
-    const screenings = (await readCatalog()).screenings || [];
+    const catalog = await readCatalog();
+    const screenings = catalog.screenings || [];
     const item = screenings.find((screening) => screening.id === decodeURIComponent(screeningMatch[1]));
+    if (item && normalize(item.city) === 'los-angeles' && !feedIsComplete(catalog.meta || {}, catalog.sources || []) && !hasLastVerifiedSnapshot(catalog)) {
+      const retryAfterSeconds = Math.max(5, Math.min(900, Number(catalog.meta?.retryAfterSeconds || 30)));
+      return sendJson(response, 503, { error: 'complete_live_index_unavailable', retryAfterSeconds }, { 'Retry-After': String(retryAfterSeconds) });
+    }
     return item ? sendJson(response, 200, { data: item }) : sendJson(response, 404, { error: 'Screening not found' });
   }
 
   if (request.method === 'GET' && pathname === '/api/venues') {
-    const venues = (await readCatalog()).venues || [];
+    const catalog = await readCatalog();
+    const venues = catalog.venues || [];
     const city = normalize(requestUrl.searchParams.get('city'));
     const data = venues.filter((venue) => !city || normalize(venue.city) === city);
-    return sendJson(response, 200, { data, meta: { count: data.length, updatedAt: new Date().toISOString() } });
+    const complete = feedIsComplete(catalog.meta || {}, catalog.sources || []);
+    if ((city === '' || city === 'los-angeles') && !complete && !hasLastVerifiedSnapshot(catalog)) {
+      const retryAfterSeconds = Math.max(5, Math.min(900, Number(catalog.meta?.retryAfterSeconds || 30)));
+      return sendJson(response, 503, { error: 'complete_live_index_unavailable', retryAfterSeconds }, { 'Retry-After': String(retryAfterSeconds) });
+    }
+    return sendJson(response, 200, { data, meta: { count: data.length, updatedAt: new Date().toISOString(), servingLastVerifiedSnapshot: !complete } });
   }
 
   if (request.method === 'GET' && pathname === '/api/sources') {
@@ -396,6 +482,11 @@ async function handleApi(request, response, requestUrl) {
     } catch (error) {
       return sendJson(response, 400, { error: 'Send valid JSON.' });
     }
+    // Honeypot fields get an indistinguishable response without adding a row.
+    if (normalize(payload.website)) return sendJson(response, 201, { ok: true, message: 'You’re on the Rerun list.' });
+    if (!notificationAllowed(notificationClientKey(request))) {
+      return sendJson(response, 429, { error: 'Please wait a few minutes before trying again.' });
+    }
     const email = normalize(payload.email);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return sendJson(response, 422, { error: 'Enter a valid email address.' });
@@ -405,7 +496,7 @@ async function handleApi(request, response, requestUrl) {
     if (result.status === 'duplicate') {
       return sendJson(response, 409, { error: 'That email is already on the list.' });
     }
-    return sendJson(response, 201, { ok: true, message: 'You’re on the list — see you at the movies.' });
+    return sendJson(response, 201, { ok: true, message: 'You’re on the Rerun list.' });
   }
 
   return sendJson(response, 404, { error: 'API route not found' });
@@ -427,7 +518,7 @@ async function serveStatic(request, response, requestUrl) {
     if (!stats.isFile()) throw Object.assign(new Error('Not a file'), { code: 'ENOENT' });
     const extension = path.extname(candidate).toLowerCase();
     const headers = { 'Content-Type': MIME_TYPES[extension] || 'application/octet-stream' };
-    if (['.html', '.js', '.css', '.json', '.webmanifest'].includes(extension)) {
+    if (['.html', '.js', '.css', '.json', '.webmanifest', '.xml'].includes(extension)) {
       headers['Cache-Control'] = 'no-cache, must-revalidate';
     }
     response.writeHead(200, headers);
@@ -443,6 +534,7 @@ async function serveStatic(request, response, requestUrl) {
 }
 
 const server = http.createServer(async (request, response) => {
+  applySecurityHeaders(response);
   const requestUrl = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
   try {
     if (requestUrl.pathname.startsWith('/api/')) return await handleApi(request, response, requestUrl);

@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover - only relevant when embedded elsewhere
 
 
 ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.environ.get("RERUN_DATA_DIR") or ROOT / "data").expanduser().resolve()
 # Render supplies PORT and requires a public 0.0.0.0 bind. Let that hosted
 # configuration win over local-development overrides that may be present in
 # the service environment.
@@ -45,17 +45,24 @@ BLOCKED_STATIC = {
     "/package.json",
     "/README.md",
     "/data/subscribers.json",
+    "/data/screenings.json",
+    "/data/venues.json",
     "/data/rerun.sqlite3",
     "/data/rerun.sqlite3-shm",
     "/data/rerun.sqlite3-wal",
     "/data/sources.json",
     "/data/last-refresh.json",
     "/data/snapshot.json",
+    "/data/last-verified-snapshot.json",
     "/data/worker-state.json",
     "/data/instagram-post-state.json",
 }
 REFRESH_LOCK = threading.Lock()
 REFRESH_TOKEN = os.environ.get("RERUN_REFRESH_TOKEN", "")
+NOTIFY_WINDOW_SECONDS = max(60, int(os.environ.get("RERUN_NOTIFY_WINDOW_SECONDS", "600")))
+NOTIFY_MAX_ATTEMPTS = max(1, int(os.environ.get("RERUN_NOTIFY_MAX_ATTEMPTS", "5")))
+NOTIFY_ATTEMPTS = {}
+NOTIFY_LOCK = threading.Lock()
 IMAGE_CACHE = {}
 IMAGE_CACHE_LOCK = threading.Lock()
 IMAGE_CACHE_LIMIT = 24
@@ -113,9 +120,20 @@ SERVER_STARTED_AT = now_iso()
 
 
 def read_catalog():
-    snapshot = read_json("snapshot.json", {})
+    current_snapshot = read_json("snapshot.json", {})
+    snapshot = current_snapshot if isinstance(current_snapshot, dict) and isinstance(current_snapshot.get("screenings"), list) else read_json("last-verified-snapshot.json", {})
     if isinstance(snapshot, dict) and isinstance(snapshot.get("screenings"), list):
-        return snapshot
+        snapshot_meta = snapshot.get("meta") if isinstance(snapshot.get("meta"), dict) else {}
+        operational_meta = read_json("last-refresh.json", {})
+        operational_meta = operational_meta if isinstance(operational_meta, dict) else {}
+        meta = {**snapshot_meta, **operational_meta}
+        if snapshot_meta.get("lastVerifiedAt") and not meta.get("lastVerifiedAt"):
+            meta["lastVerifiedAt"] = snapshot_meta["lastVerifiedAt"]
+        return {
+            **snapshot,
+            "sources": read_json("sources.json", snapshot.get("sources", [])),
+            "meta": meta,
+        }
     return {
         "schemaVersion": 0,
         "catalogVersion": None,
@@ -210,6 +228,50 @@ def feed_is_complete(refresh_meta, sources):
     )
 
 
+def has_last_verified_snapshot(catalog):
+    """Only a completed official-source run can unlock outage fallback data."""
+
+    return bool(
+        isinstance(catalog, dict)
+        and isinstance(catalog.get("screenings"), list)
+        and (catalog.get("meta") or {}).get("lastVerifiedAt")
+    )
+
+
+def source_health(sources):
+    required = [source for source in sources if source_is_required(source)]
+    unavailable = [source.get("name") for source in required if source.get("status") != "verified" and source.get("name")]
+    degraded = [source.get("name") for source in sources if source.get("status") in {"degraded", "error"} and source.get("name")]
+    return {
+        "requiredCount": len(required),
+        "verifiedRequiredCount": sum(1 for source in required if source.get("status") == "verified"),
+        "unavailableRequiredSources": unavailable,
+        "degradedSources": degraded,
+    }
+
+
+def notify_client_key(handler):
+    forwarded = str(handler.headers.get("X-Forwarded-For", "")).split(",", 1)[0].strip()
+    return forwarded or handler.client_address[0]
+
+
+def notify_allowed(client_key):
+    now = datetime.now(timezone.utc).timestamp()
+    with NOTIFY_LOCK:
+        window_started, count = NOTIFY_ATTEMPTS.get(client_key, (now, 0))
+        if now - window_started >= NOTIFY_WINDOW_SECONDS:
+            window_started, count = now, 0
+        if count >= NOTIFY_MAX_ATTEMPTS:
+            return False
+        NOTIFY_ATTEMPTS[client_key] = (window_started, count + 1)
+        # Keep this small in long-lived web processes while expiring old keys.
+        if len(NOTIFY_ATTEMPTS) > 1024:
+            for key, (started, _) in list(NOTIFY_ATTEMPTS.items()):
+                if now - started >= NOTIFY_WINDOW_SECONDS:
+                    NOTIFY_ATTEMPTS.pop(key, None)
+        return True
+
+
 def retry_after_seconds(refresh_meta):
     """Return a bounded delay that matches the server's next refresh window."""
 
@@ -255,15 +317,17 @@ def maybe_refresh(force=False):
             return meta
 
 
-def feed_meta(city, data, venues, sources, refresh_meta):
+def feed_meta(city, data, venues, sources, refresh_meta, serving_last_verified_snapshot=False):
     return {
         "count": len(data),
         "city": city or None,
         "updatedAt": now_iso(),
         "lastRefresh": refresh_meta.get("lastRefresh"),
+        "lastVerifiedAt": refresh_meta.get("lastVerifiedAt"),
         "refreshStatus": refresh_meta.get("status", "unknown"),
         "stale": bool(refresh_meta.get("stale", True)),
         "complete": feed_is_complete(refresh_meta, sources),
+        "servingLastVerifiedSnapshot": bool(serving_last_verified_snapshot),
         "nextRetryAt": refresh_meta.get("nextRetryAt"),
         "source": "Official venue feeds",
         "sourceCount": len(sources),
@@ -294,6 +358,21 @@ class RerunHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format_string, *args):
         print(f"{self.address_string()} - {format_string % args}")
+
+    def end_headers(self):
+        """Keep browser-facing responses conservative without blocking PWA use."""
+
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; script-src 'self'; connect-src 'self'; form-action 'self'; "
+            "base-uri 'self'; frame-ancestors 'none'",
+        )
+        super().end_headers()
 
     def send_json(self, status, payload, retry_after=None):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -380,6 +459,14 @@ class RerunHandler(BaseHTTPRequestHandler):
         except (ValueError, TypeError, json.JSONDecodeError):
             self.send_json(400, {"error": "Send valid JSON."})
             return
+        # A hidden field catches ordinary form bots. Deliberately return the
+        # same success shape without touching the subscriber store.
+        if normalized(payload.get("website")):
+            self.send_json(201, {"ok": True, "message": "You’re on the Rerun list."})
+            return
+        if not notify_allowed(notify_client_key(self)):
+            self.send_json(429, {"error": "Please wait a few minutes before trying again."})
+            return
         email = normalized(payload.get("email"))
         if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
             self.send_json(422, {"error": "Enter a valid email address."})
@@ -395,7 +482,7 @@ class RerunHandler(BaseHTTPRequestHandler):
         if result == "duplicate":
             self.send_json(409, {"error": "That email is already on the list."})
             return
-        self.send_json(201, {"ok": True, "message": "You’re on the list — see you at the movies."})
+        self.send_json(201, {"ok": True, "message": "You’re on the Rerun list."})
 
     def handle_api(self, parsed):
         query = parse_qs(parsed.query)
@@ -405,7 +492,10 @@ class RerunHandler(BaseHTTPRequestHandler):
             # as the service health check while a full official-source crawl is
             # running; blocking would make a healthy process look unavailable
             # and can produce a platform-level 502.
-            meta = current_refresh_meta()
+            catalog = read_catalog()
+            meta = catalog.get("meta") or current_refresh_meta()
+            sources = catalog.get("sources", [])
+            complete = feed_is_complete(meta, sources)
             self.send_json(
                 200,
                 {
@@ -413,14 +503,20 @@ class RerunHandler(BaseHTTPRequestHandler):
                     "service": "rerun-api",
                     "version": "0.5.0",
                     "updatedAt": now_iso(),
-                        "feed": {
+                    "feed": {
                         "status": meta.get("status", "unknown"),
                         "lastRefresh": meta.get("lastRefresh"),
-                            "stale": bool(meta.get("stale", True)),
-                            "complete": feed_is_complete(meta, read_catalog().get("sources", [])),
-                            "catalogVersion": read_catalog().get("catalogVersion"),
-                        },
-                        "worker": read_json("worker-state.json", {"status": "not_started"}),
+                        "lastVerifiedAt": meta.get("lastVerifiedAt"),
+                        "stale": bool(meta.get("stale", True)),
+                        "complete": complete,
+                        "servingLastVerifiedSnapshot": not complete and has_last_verified_snapshot(catalog),
+                        "catalogVersion": catalog.get("catalogVersion"),
+                        "sourceHealth": source_health(sources),
+                    },
+                    "storage": {
+                        "persistentStorageConfigured": bool(os.environ.get("RERUN_DATA_DIR")),
+                    },
+                    "worker": read_json("worker-state.json", {"status": "not_started"}),
                 },
             )
             return
@@ -442,7 +538,9 @@ class RerunHandler(BaseHTTPRequestHandler):
                 screenings = catalog.get("screenings", [])
                 venues = catalog.get("venues", [])
                 sources = catalog.get("sources", [])
-            if city in {"", "los-angeles"} and not feed_is_complete(refresh_meta, sources):
+            complete = feed_is_complete(refresh_meta, sources)
+            serving_last_verified_snapshot = not complete and has_last_verified_snapshot(catalog)
+            if city in {"", "los-angeles"} and not complete and not serving_last_verified_snapshot:
                 meta = feed_meta(city, [], venues, sources, refresh_meta)
                 retry_after = retry_after_seconds(refresh_meta)
                 self.send_json(
@@ -487,19 +585,43 @@ class RerunHandler(BaseHTTPRequestHandler):
             ]
             data.sort(key=iso_sort_value)
             data = data[:limit]
-            self.send_json(200, {"data": data, "meta": feed_meta(city, data, venues, sources, refresh_meta)})
+            self.send_json(
+                200,
+                {
+                    "data": data,
+                    "meta": feed_meta(
+                        city,
+                        data,
+                        venues,
+                        sources,
+                        refresh_meta,
+                        serving_last_verified_snapshot=serving_last_verified_snapshot,
+                    ),
+                },
+            )
             return
         if path.startswith("/api/screenings/"):
             screening_id = unquote(path.rsplit("/", 1)[-1])
             with REFRESH_LOCK:
-                item = next((item for item in read_catalog().get("screenings", []) if item.get("id") == screening_id), None)
+                catalog = read_catalog()
+                item = next((item for item in catalog.get("screenings", []) if item.get("id") == screening_id), None)
+            if item and normalized(item.get("city")) == "los-angeles" and not feed_is_complete(catalog.get("meta") or {}, catalog.get("sources", [])) and not has_last_verified_snapshot(catalog):
+                retry_after = retry_after_seconds(catalog.get("meta") or {})
+                self.send_json(503, {"error": "complete_live_index_unavailable", "retryAfterSeconds": retry_after}, retry_after=retry_after)
+                return
             self.send_json(200 if item else 404, {"data": item} if item else {"error": "Screening not found"})
             return
         if path == "/api/venues":
             city = normalized(query.get("city", [""])[0])
             with REFRESH_LOCK:
-                venues = [venue for venue in read_catalog().get("venues", []) if not city or normalized(venue.get("city")) == city]
-            self.send_json(200, {"data": venues, "meta": {"count": len(venues), "city": city or None, "updatedAt": now_iso()}})
+                catalog = read_catalog()
+                venues = [venue for venue in catalog.get("venues", []) if not city or normalized(venue.get("city")) == city]
+            complete = feed_is_complete(catalog.get("meta") or {}, catalog.get("sources", []))
+            if city in {"", "los-angeles"} and not complete and not has_last_verified_snapshot(catalog):
+                retry_after = retry_after_seconds(catalog.get("meta") or {})
+                self.send_json(503, {"error": "complete_live_index_unavailable", "retryAfterSeconds": retry_after}, retry_after=retry_after)
+                return
+            self.send_json(200, {"data": venues, "meta": {"count": len(venues), "city": city or None, "updatedAt": now_iso(), "servingLastVerifiedSnapshot": not complete}})
             return
         if path == "/api/sources":
             with REFRESH_LOCK:
@@ -528,7 +650,8 @@ class RerunHandler(BaseHTTPRequestHandler):
             return
         body = candidate.read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", mimetypes.guess_type(candidate.name)[0] or "application/octet-stream")
+        content_type = "application/xml; charset=utf-8" if candidate.suffix.lower() == ".xml" else (mimetypes.guess_type(candidate.name)[0] or "application/octet-stream")
+        self.send_header("Content-Type", content_type)
         if candidate.suffix.lower() in {".html", ".js", ".css", ".json", ".webmanifest"}:
             self.send_header("Cache-Control", "no-cache, must-revalidate")
         self.send_header("Content-Length", str(len(body)))

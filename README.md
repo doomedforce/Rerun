@@ -29,11 +29,13 @@ the default port is already in use.
 
 Rerun runs one scheduled refresh worker at a time. Browse requests are
 read-only: they serve the last atomically written catalog snapshot and never
-start a crawl. The API refuses to return screening data unless all required
-sources report verified, so the browser never renders a partial required-source list. New
-Beverly and Vidiots are also indexed when available, but are marked optional
-so ticketing or program-site outages cannot block the verified feed. The
-current Los Angeles sources are:
+start a crawl. Before Rerun has completed its first fully verified crawl, the
+API returns an intentional `503` instead of presenting bundled seed data as
+live. Once a verified catalog exists, a temporary required-source outage serves
+that last verified catalog with `servingLastVerifiedSnapshot: true` and clear
+status copy while the worker retries. New Beverly and Vidiots are also indexed
+when available, but are marked optional so ticketing or program-site outages
+cannot block the verified feed. The current Los Angeles sources are:
 
 - [American Cinematheque Now Showing](https://www.americancinematheque.com/now-showing/)
 - [New Beverly Cinema Veezi sessions](https://ticketing.uswest.veezi.com/sessions/?siteToken=fmtswb0qqbym3de6c4bbsqj89m)
@@ -63,11 +65,10 @@ fetched concurrently with a per-domain request gap, and responses are reused
 from the local HTML cache in `data/cache/`. Showtimes are normalized to America/Los_Angeles,
 past events are removed, duplicate source/title/time records are collapsed,
 and every event keeps its source `sourceUrl`, `sourceName`, and
-`sourceLastChecked` value. If a required source is unavailable, the API
-withholds the catalog and the browser remains in its complete-index loading
-state. That response is an intentional HTTP 503, not a missing page: it
-includes the source-level error, a `Retry-After` header, and a
-`retryAfterSeconds` value. Optional-source failures remain visible through
+`sourceLastChecked` value. A failed required-source refresh never overwrites
+`last-verified-snapshot.json`. If no verified snapshot exists, the API returns
+an intentional HTTP 503 with source-level errors, a `Retry-After` header, and
+a `retryAfterSeconds` value. Optional-source failures remain visible through
 `/api/sources` and the feed health label.
 The browser honors the server's backoff (up to 15 minutes) instead of polling
 every few seconds while a venue is unavailable, so a Vista outage no longer
@@ -112,7 +113,8 @@ The Academy Museum adapter traverses the official calendar's `Screenings`
 program-type filter, follows pagination/load-more calendar links, and then
 opens each linked program detail page for the exact date/time, format, artwork,
 and ticket link. If the calendar is client-rendered, it falls back to the
-official Screenings & Series index and current series pages. It accepts only
+official Screenings & Series index, current series pages, and the site's
+sitemap or sitemap index. It accepts only
 detail pages explicitly labelled `Screenings` or `Screening from Series`, so
 conversations, book signings, special events, exhibitions, and related-event
 links are excluded. The Academy Museum source is optional for feed health, so
@@ -120,11 +122,13 @@ a temporary museum-site outage does not erase the other official listings.
 
 Fine Arts Theatre Beverly Hills uses its official Veezi sessions feed, reusing
 the same canonical session parser as Vista and New Beverly. Filmforum is
-traversed from its official schedule into program detail pages. Old Town Music
-Hall is traversed from its official homepage into movie pages and their dated
+traversed from its official schedule into program detail pages; each detail
+page is authoritative for its own ticket link. Old Town Music Hall is
+traversed from its official homepage into movie pages and their dated
 showtimes. UCLA Film & Television Archive traversal checks the official events
-and series indexes, with an official sitemap fallback for client-rendered event
-lists; only future pages with screening or film-program markers are retained.
+and series indexes, then walks sitemap indexes and child sitemaps when those
+client-rendered lists contain no links; only future pages with screening or
+film-program markers are retained.
 All four sources are optional so a source-specific outage cannot invalidate the
 complete feed from the existing required venues.
 
@@ -155,8 +159,25 @@ Refresh timing, worker state, and source health are available from
 `GET /api/health` and `GET /api/sources`. `RERUN_WORKER_POLL_SECONDS` controls
 how often the worker checks for a due refresh; `RERUN_REFRESH_TTL_SECONDS`
 defaults to 30 minutes, and `RERUN_REFRESH_RETRY_SECONDS` defaults to 10
-minutes after a failed attempt.
-There is deliberately no partial/offline listing mode in the UI.
+minutes after a failed attempt. Health responses include whether durable
+storage is configured, source-level availability, and whether the browse API
+is currently serving a last verified snapshot.
+
+## Render launch configuration
+
+All operational state (the verified snapshot, crawl cache, worker state, and
+subscriber SQLite database) must live on persistent storage in production.
+On Render, attach a persistent disk, mount it at `/var/data`, and set:
+
+```text
+RERUN_DATA_DIR=/var/data
+```
+
+Then configure Render's HTTP health check path as `/api/health`. After the next
+successful crawl, confirm the health payload reports
+`storage.persistentStorageConfigured: true`, a populated `lastVerifiedAt`, and
+`feed.complete: true`. The raw JSON catalog paths are intentionally blocked;
+clients must use the API endpoints below.
 
 The scraper is intentionally conservative: it only follows event pages on the
 configured official venue domains, plus the explicit TeenTix LA Vidiots partner
@@ -173,11 +194,13 @@ availability, and image rights before buying or publishing.
 - `GET /api/venues?city=los-angeles` — official venue directory
 - `GET /api/sources` — source adapters, counts, last checks, and errors
 - `POST /api/refresh` — force a source refresh with `X-Rerun-Refresh-Token`
-- `POST /api/notify` with `{ "email": "you@example.com" }` — local alert signup
+- `POST /api/notify` with `{ "email": "you@example.com" }` — local signup store
 
 Alert signups are stored in SQLite at `data/rerun.sqlite3`, with an idempotent
 migration from the prototype's `data/subscribers.json` file. The database and
-all operational JSON files are blocked from static serving.
+all operational JSON files are blocked from static serving. The form has a
+short per-IP rate limit and honeypot field; it stores subscribers but does not
+send mail until a delivery provider is connected.
 
 ## Tests
 
@@ -195,7 +218,7 @@ verified before publishing or using it in a commercial context.
 
 ## Product behavior
 
-- Official-source Los Angeles browse feed with stale/degraded transparency
+- Official-source Los Angeles browse feed with verified-snapshot outage fallback
 - Day-first browse view with previous/next navigation and a dedicated calendar page
 - Selectable month calendar with per-day screening counts and details
 - Browse requests are filtered to the selected date server-side, keeping the live payload small
@@ -209,6 +232,20 @@ verified before publishing or using it in a commercial context.
 - Calendar `.ics` download from every screening detail view
 - SQLite-backed alert signup connected to the local API
 - Installable/offline shell through `manifest.json` and `service-worker.js`
+
+## Deployment checklist
+
+1. Attach a Render persistent disk and set `RERUN_DATA_DIR` to its mount path.
+2. Configure `/api/health` as the service health check.
+3. Deploy, wait for one successful worker crawl, then inspect `/api/health`.
+4. Confirm `lastVerifiedAt`, `feed.complete`, and each required source before
+   announcing the guide.
+5. Review venue terms, ticket links, privacy copy, and image rights before
+   commercial launch.
+
+Useful Render references: [persistent disks](https://render.com/docs/disks),
+[health checks](https://render.com/docs/health-checks), and
+[Blueprint configuration](https://render.com/docs/blueprint-spec).
 
 ## Instagram Today in LA publisher
 

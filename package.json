@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "python3 -m unittest discover -s tests -v && node --check server.js && node --check app.js && node tests/test_server_js.js"
   },
   "engines": {
     "node": ">=18"

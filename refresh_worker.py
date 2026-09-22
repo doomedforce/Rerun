@@ -18,7 +18,7 @@ except ImportError:  # pragma: no cover - only relevant in reduced deployments
 
 
 ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.environ.get("RERUN_DATA_DIR") or ROOT / "data").expanduser().resolve()
 POLL_SECONDS = max(15, int(os.environ.get("RERUN_WORKER_POLL_SECONDS", "60")))
 STATE_PATH = DATA_DIR / "worker-state.json"
 

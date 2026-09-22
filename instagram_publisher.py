@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 
 ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.environ.get("RERUN_DATA_DIR") or ROOT / "data").expanduser().resolve()
 STATE_PATH = DATA_DIR / "instagram-post-state.json"
 LOS_ANGELES = ZoneInfo("America/Los_Angeles")
 API_VERSION = os.environ.get("RERUN_INSTAGRAM_API_VERSION", "v23.0")

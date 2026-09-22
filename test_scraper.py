@@ -234,6 +234,29 @@ FILMFORUM_HTML = """
 <a href="https://tickets.example/rare-film">Buy Tickets</a></html>
 """
 
+FILMFORUM_MULTI_HTML = """
+<html>
+<h2><a href="/events/rare-film-2026-09-27/">Rare Film</a></h2>
+<p>Date: Sep 27, 2026 7:30PM</p><p>Location: 2220 Arts + Archives</p>
+<a href="/events/rare-film-2026-09-27/">Details</a>
+<a href="https://link.dice.fm/rare-film">Buy Tickets</a>
+<h2><a href="/events/another-film-2026-10-04/">Another Film</a></h2>
+<p>Date: Oct 4, 2026 7:30PM</p><p>Location: 2220 Arts + Archives</p>
+<a href="/events/another-film-2026-10-04/">Details</a>
+<a href="https://link.dice.fm/another-film">Buy Tickets</a>
+</html>
+"""
+
+FILMFORUM_RARE_DETAIL_HTML = """
+<html><h1>Rare Film</h1><p>Rare film program.</p>
+<a href="https://link.dice.fm/correct-rare-film">Buy Tickets</a></html>
+"""
+
+FILMFORUM_ANOTHER_DETAIL_HTML = """
+<html><h1>Another Film</h1><p>Another film program.</p>
+<a href="https://link.dice.fm/correct-another-film">Buy Tickets</a></html>
+"""
+
 OLD_TOWN_HTML = """
 <html><head><meta property="og:image" content="https://indy-systems.imgix.net/gold-rush.jpg">
 <script type="application/ld+json">{"description":"A classic silent film.","date":"2026-10-24"}</script></head>
@@ -247,6 +270,19 @@ UCLA_HTML = """
 <body><h1>Introducing Dorothy Dandridge</h1><p>Screening 1 of 3</p>
 <p>Dec 2, 2026</p><p>7:00 pm</p><p>Billy Wilder Theater</p>
 <p>Year</p><p>1999</p><p>Digital</p></body></html>
+"""
+
+UCLA_SITEMAP_INDEX_XML = """
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>https://www.cinema.ucla.edu/events-sitemap.xml</loc></sitemap>
+</sitemapindex>
+"""
+
+UCLA_EVENT_SITEMAP_XML = """
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://cinema.ucla.edu/events/introducing-dorothy-dandridge-2026-12-02/</loc></url>
+  <url><loc>https://cinema.ucla.edu/series/archive-treasures/</loc></url>
+</urlset>
 """
 
 
@@ -279,6 +315,28 @@ class ScraperTests(unittest.TestCase):
             scraper.discover_academy_traversal_urls(ACADEMY_CALENDAR_HTML),
             ["https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O&page=2"],
         )
+
+    def test_academy_sitemap_index_reaches_detail_pages(self):
+        sitemap_index = """
+        <sitemapindex><sitemap><loc>https://www.academymuseum.org/program-sitemap.xml</loc></sitemap></sitemapindex>
+        """
+        program_sitemap = """
+        <urlset><url><loc>https://www.academymuseum.org/en/programs/detail/far-from-heaven-019f-example</loc></url></urlset>
+        """
+        self.assertEqual(
+            scraper.discover_academy_sitemap_urls(sitemap_index, "https://www.academymuseum.org/sitemap.xml"),
+            ["https://www.academymuseum.org/program-sitemap.xml"],
+        )
+        pages = {
+            scraper.ACADEMY_CALENDAR_URL: "<html></html>",
+            scraper.ACADEMY_FILMS_URL: "<html></html>",
+            scraper.ACADEMY_SITEMAP_URLS[0]: sitemap_index,
+            "https://www.academymuseum.org/program-sitemap.xml": program_sitemap,
+            "https://www.academymuseum.org/en/programs/detail/far-from-heaven-019f-example/": ACADEMY_DETAIL_HTML,
+        }
+        result = scraper._scrape_academy_museum(NOW, FakeFetcher(pages), force=True)
+        self.assertEqual(result["source"]["status"], "verified")
+        self.assertEqual(len(result["events"]), 1)
 
     def test_academy_parser_requires_screenings_label_and_reads_embedded_metadata(self):
         event = scraper.parse_academy_event(
@@ -345,6 +403,29 @@ class ScraperTests(unittest.TestCase):
         self.assertIsNotNone(ucla)
         self.assertEqual(ucla["venue"], "Billy Wilder Theater")
         self.assertEqual(ucla["startAt"], "2026-12-02T19:00:00-08:00")
+
+    def test_filmforum_ticket_links_are_resolved_from_each_detail_page(self):
+        entries = scraper.discover_filmforum_entries(FILMFORUM_MULTI_HTML)
+        self.assertEqual([entry["ticketUrl"] for entry in entries], ["", ""])
+        pages = {
+            scraper.FILMFORUM_SCHEDULE_URL: FILMFORUM_MULTI_HTML,
+            "https://www.lafilmforum.org/events/rare-film-2026-09-27/": FILMFORUM_RARE_DETAIL_HTML,
+            "https://www.lafilmforum.org/events/another-film-2026-10-04/": FILMFORUM_ANOTHER_DETAIL_HTML,
+        }
+        result = scraper._scrape_filmforum(NOW, FakeFetcher(pages), force=True)
+        ticket_urls = {event["title"]: event["ticketUrl"] for event in result["events"]}
+        self.assertEqual(ticket_urls["Rare Film"], "https://link.dice.fm/correct-rare-film")
+        self.assertEqual(ticket_urls["Another Film"], "https://link.dice.fm/correct-another-film")
+
+    def test_ucla_sitemap_index_reaches_event_urls(self):
+        self.assertEqual(
+            scraper.discover_ucla_sitemap_urls(UCLA_SITEMAP_INDEX_XML, scraper.UCLA_SITEMAP_URL),
+            ["https://www.cinema.ucla.edu/events-sitemap.xml"],
+        )
+        self.assertEqual(
+            scraper.discover_ucla_event_urls(UCLA_EVENT_SITEMAP_XML),
+            ["https://cinema.ucla.edu/events/introducing-dorothy-dandridge-2026-12-02/"],
+        )
 
     def test_new_sources_are_optional_and_registered(self):
         for source_id in ("fine-arts-theatre", "filmforum", "old-town-music-hall", "ucla-film-archive"):

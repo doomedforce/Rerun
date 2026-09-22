@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import gzip
+from html import unescape
 import json
 import os
 import re
@@ -29,7 +30,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.environ.get("RERUN_DATA_DIR") or ROOT / "data").expanduser().resolve()
 CACHE_DIR = DATA_DIR / "cache"
 
 
@@ -133,12 +134,23 @@ ACADEMY_FILMS_URL = "https://www.academymuseum.org/en/films?qr=theater"
 ACADEMY_HOSTS = {"academymuseum.org", "www.academymuseum.org", "v2.academymuseum.org"}
 ACADEMY_SCREENING_TYPE_ID = "16i3uOYQwism7sMDhIQr2O"
 ACADEMY_DETAIL_PATH_PREFIXES = ("/programs/detail/", "/en/programs/detail/")
+ACADEMY_SITEMAP_URLS = (
+    "https://www.academymuseum.org/sitemap.xml",
+    "https://www.academymuseum.org/sitemap_index.xml",
+    "https://www.academymuseum.org/en/sitemap.xml",
+)
 FINE_ARTS_SESSIONS_URL = "https://ticketing.uswest.veezi.com/sessions/?siteToken=tez3prscsvfbagchhkxbevjwk8"
 FILMFORUM_SCHEDULE_URL = "https://www.lafilmforum.org/schedule/"
 OLD_TOWN_HOME_URL = "https://www.oldtownmusichall.org/home/"
 UCLA_EVENTS_URL = "https://www.cinema.ucla.edu/events/"
 UCLA_SERIES_URL = "https://www.cinema.ucla.edu/series/"
 UCLA_SITEMAP_URL = "https://www.cinema.ucla.edu/sitemap.xml"
+UCLA_SITEMAP_URLS = (
+    UCLA_SITEMAP_URL,
+    "https://cinema.ucla.edu/sitemap.xml",
+    "https://www.cinema.ucla.edu/sitemap_index.xml",
+    "https://www.cinema.ucla.edu/wp-sitemap.xml",
+)
 
 SOURCE_REGISTRY = {
     "american-cinematheque": {
@@ -894,6 +906,23 @@ def discover_academy_event_urls(html: str, base_url: str = ACADEMY_CALENDAR_URL)
         if not parsed.path.rstrip("/").startswith(ACADEMY_DETAIL_PATH_PREFIXES):
             continue
         normalized = urlunsplit(("https", parsed.netloc.lower(), parsed.path.rstrip("/") + "/", "", ""))
+        if normalized not in urls:
+            urls.append(normalized)
+    return urls
+
+
+def discover_academy_sitemap_urls(html: str, base_url: str) -> list[str]:
+    """Return child sitemap URLs when the Academy publishes a sitemap index."""
+
+    urls: list[str] = []
+    for match in re.finditer(r"<loc[^>]*>(.*?)</loc>", html, re.I | re.S):
+        candidate = urljoin(base_url, unescape(match.group(1)).strip()).split("#", 1)[0]
+        parsed = urlsplit(candidate)
+        if parsed.scheme != "https" or parsed.netloc.lower() not in ACADEMY_HOSTS:
+            continue
+        if "sitemap" not in parsed.path.lower() and not parsed.path.lower().endswith((".xml", ".xml.gz")):
+            continue
+        normalized = urlunsplit(("https", parsed.netloc.lower(), parsed.path, parsed.query, ""))
         if normalized not in urls:
             urls.append(normalized)
     return urls
@@ -2365,21 +2394,15 @@ def discover_filmforum_entries(html: str, base_url: str = FILMFORUM_SCHEDULE_URL
                 location = normalize_space(candidate.split(":", 1)[1])
                 break
         page_url = base_url
-        ticket_url = base_url
         title_key = screening_title_key(title)
         for link in parser.links:
             candidate_url = urljoin(base_url, link.get("href", ""))
             parsed = urlsplit(candidate_url)
             link_key = screening_title_key(link.get("text", ""))
             if parsed.netloc.lower() in {"lafilmforum.org", "www.lafilmforum.org"} and (
-                link_key == title_key or title_key in link_key or link_key in {"details", "more details"}
+                link_key == title_key or title_key in link_key
             ):
                 page_url = candidate_url.split("#", 1)[0]
-                break
-        for link in parser.links:
-            candidate_url = urljoin(base_url, link.get("href", ""))
-            if "ticket" in normalize_key(link.get("text", "")) or "buy" in normalize_key(link.get("text", "")):
-                ticket_url = candidate_url
                 break
         key = (title_key, start_at.isoformat())
         if key in used:
@@ -2390,7 +2413,11 @@ def discover_filmforum_entries(html: str, base_url: str = FILMFORUM_SCHEDULE_URL
                 "title": title,
                 "startAt": start_at,
                 "pageUrl": page_url,
-                "ticketUrl": ticket_url,
+                # The schedule contains many independent Buy Tickets links.
+                # Do not choose one globally: the detail page is the only
+                # reliable association between this program and its DICE/
+                # Eventbrite link.
+                "ticketUrl": "",
                 "location": location,
             }
         )
@@ -2497,9 +2524,39 @@ def parse_old_town_movie(html: str, page_url: str, now: datetime | None = None) 
 UCLA_HOSTS = {"cinema.ucla.edu", "www.cinema.ucla.edu"}
 
 
+def _ucla_normalize_url(value: str, base_url: str) -> str:
+    parsed = urlsplit(urljoin(base_url, unescape(value).strip()).split("#", 1)[0])
+    if parsed.scheme != "https" or parsed.netloc.lower() not in UCLA_HOSTS:
+        return ""
+    return urlunsplit(("https", parsed.netloc.lower(), parsed.path, parsed.query, ""))
+
+
+def discover_ucla_sitemap_urls(html: str, base_url: str) -> list[str]:
+    """Return child sitemap URLs from a sitemap index.
+
+    UCLA's calendar is rendered by JavaScript, and the public sitemap may be
+    either a URL set or a sitemap index depending on the site's deployment.
+    Keep this parser deliberately small and namespace-independent.
+    """
+
+    urls: list[str] = []
+    for match in re.finditer(r"<loc[^>]*>(.*?)</loc>", html, re.I | re.S):
+        candidate = _ucla_normalize_url(match.group(1), base_url)
+        if not candidate or candidate in urls:
+            continue
+        path = urlsplit(candidate).path.lower()
+        if "sitemap" in path or path.endswith((".xml", ".xml.gz")):
+            urls.append(candidate)
+    return urls
+
+
 def discover_ucla_event_urls(html: str, base_url: str = UCLA_EVENTS_URL) -> list[str]:
     parser = parse_html(html)
     candidates = [urljoin(base_url, link.get("href", "")) for link in parser.links]
+    candidates.extend(
+        unescape(match.group(1)).strip()
+        for match in re.finditer(r"<loc[^>]*>(.*?)</loc>", html, re.I | re.S)
+    )
     candidates.extend(
         urljoin(base_url, match.group(0))
         for match in re.finditer(
@@ -2509,9 +2566,10 @@ def discover_ucla_event_urls(html: str, base_url: str = UCLA_EVENTS_URL) -> list
     )
     urls: list[str] = []
     for candidate in candidates:
-        parsed = urlsplit(candidate.split("#", 1)[0])
-        if parsed.scheme != "https" or parsed.netloc.lower() not in UCLA_HOSTS:
+        normalized = _ucla_normalize_url(candidate, base_url)
+        if not normalized:
             continue
+        parsed = urlsplit(normalized)
         if parsed.path.rstrip("/") in {"/events", "/events/"} or not parsed.path.rstrip("/").startswith("/events/"):
             continue
         normalized = urlunsplit(("https", parsed.netloc.lower(), parsed.path.rstrip("/") + "/", "", ""))
@@ -3238,6 +3296,25 @@ def _scrape_academy_museum(current: datetime, fetcher: CachedFetcher, force: boo
         except Exception as error:
             errors.append(f"{ACADEMY_FILMS_URL}: {error}")
 
+    if not event_urls:
+        sitemap_queue = list(ACADEMY_SITEMAP_URLS)
+        checked_sitemaps: set[str] = set()
+        while sitemap_queue and len(checked_sitemaps) < 12 and not event_urls:
+            sitemap_url = sitemap_queue.pop(0)
+            if sitemap_url in checked_sitemaps:
+                continue
+            checked_sitemaps.add(sitemap_url)
+            try:
+                sitemap_html, sitemap_checked_at, _ = fetcher.fetch(sitemap_url, force=force)
+                checked_at = sitemap_checked_at or checked_at
+                pages_checked += 1
+                event_urls.extend(discover_academy_event_urls(sitemap_html, sitemap_url))
+                for child_url in discover_academy_sitemap_urls(sitemap_html, sitemap_url):
+                    if child_url not in checked_sitemaps and child_url not in sitemap_queue:
+                        sitemap_queue.append(child_url)
+            except Exception as error:
+                warnings.append(f"{sitemap_url}: {error}")
+
     unique_event_urls = list(dict.fromkeys(event_urls))[:DEFAULT_MAX_AC_EVENTS]
     detail_results = parallel_fetch(fetcher, unique_event_urls, force=force, max_workers=16)
     events: list[dict] = []
@@ -3356,7 +3433,7 @@ def _scrape_filmforum(current: datetime, fetcher: CachedFetcher, force: bool) ->
                 start_at=entry["startAt"],
                 now=current,
                 page_url=entry.get("pageUrl") or FILMFORUM_SCHEDULE_URL,
-                ticket_url=entry.get("ticketUrl") or detail.get("ticketUrl") or entry.get("pageUrl") or FILMFORUM_SCHEDULE_URL,
+                ticket_url=detail.get("ticketUrl") or entry.get("ticketUrl") or entry.get("pageUrl") or FILMFORUM_SCHEDULE_URL,
                 venue=venue,
                 year=detail.get("year", ""),
                 format_name=detail.get("format", ""),
@@ -3474,13 +3551,27 @@ def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: 
             except Exception as error:
                 warnings.append(f"{index_url}: {error}")
         if not event_urls:
-            try:
-                sitemap_html, sitemap_checked_at, _ = fetcher.fetch(UCLA_SITEMAP_URL, force=force)
-                checked_at = sitemap_checked_at or checked_at
-                pages_checked += 1
-                event_urls.extend(discover_ucla_event_urls(sitemap_html, UCLA_EVENTS_URL))
-            except Exception as error:
-                warnings.append(f"{UCLA_SITEMAP_URL}: {error}")
+            # The calendar and series indexes are client-rendered. Walk the
+            # site's sitemap variants and any child sitemaps so a deployment
+            # change from a URL set to a sitemap index does not make UCLA
+            # appear unavailable.
+            sitemap_queue = list(UCLA_SITEMAP_URLS)
+            checked_sitemaps: set[str] = set()
+            while sitemap_queue and len(checked_sitemaps) < 12 and not event_urls:
+                sitemap_url = sitemap_queue.pop(0)
+                if sitemap_url in checked_sitemaps:
+                    continue
+                checked_sitemaps.add(sitemap_url)
+                try:
+                    sitemap_html, sitemap_checked_at, _ = fetcher.fetch(sitemap_url, force=force)
+                    checked_at = sitemap_checked_at or checked_at
+                    pages_checked += 1
+                    event_urls.extend(discover_ucla_event_urls(sitemap_html, UCLA_EVENTS_URL))
+                    for child_url in discover_ucla_sitemap_urls(sitemap_html, sitemap_url):
+                        if child_url not in checked_sitemaps and child_url not in sitemap_queue:
+                            sitemap_queue.append(child_url)
+                except Exception as error:
+                    warnings.append(f"{sitemap_url}: {error}")
         event_urls = list(dict.fromkeys(event_urls))[:DEFAULT_MAX_AC_EVENTS]
         results = parallel_fetch(fetcher, event_urls, force=force, max_workers=16)
         for page_url in event_urls:

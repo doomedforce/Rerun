@@ -56,15 +56,15 @@ const browseDayWord = document.querySelector('#browse-day-word');
 function ensureLogoFallbacks() {
   document.querySelectorAll('img').forEach((image) => {
     const source = image.getAttribute('src') || '';
-    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20260909-mobile-logo';
-    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20260909-mobile-logo';
+    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20260922-launch';
+    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20260922-launch';
     image.addEventListener('error', () => {
       if (image.dataset.logoFallbackApplied) return;
       image.dataset.logoFallbackApplied = 'true';
       if (image.classList.contains('brand-logo') || image.closest('.hero-branding, .calendar-branding')) {
-        image.src = '/assets/rerun-logo.svg?v=20260909-mobile-logo';
+        image.src = '/assets/rerun-logo.svg?v=20260922-launch';
       } else if (image.closest('.footer-brand')) {
-        image.src = '/assets/rerun-mark.svg?v=20260909-mobile-logo';
+        image.src = '/assets/rerun-mark.svg?v=20260922-launch';
       }
     }, { once: true });
   });
@@ -85,6 +85,24 @@ function imageUrl(image) {
   } catch (error) {
     return image;
   }
+}
+
+function sameDestination(first, second) {
+  if (!first || !second) return false;
+  try {
+    return new URL(first, location.href).href === new URL(second, location.href).href;
+  } catch (error) {
+    return String(first) === String(second);
+  }
+}
+
+function listingAction(item = {}) {
+  const ticketUrl = item.ticketUrl || item.sourceUrl || '';
+  const unavailable = /\b(?:no advance (?:tickets?|reservations?)|first[- ]come|sold out|tickets? unavailable)\b/i.test(`${item.notes || ''} ${item.synopsis || ''}`);
+  if (item.sourceStatus === 'partner-fallback') return { label: 'View listing', title: 'Open the partner event listing' };
+  if (unavailable || item.ticketStatus === 'details') return { label: 'Event details', title: 'Open the official event details' };
+  if (sameDestination(ticketUrl, item.sourceUrl)) return { label: 'Tickets & details', title: 'Open the official event page for tickets and details' };
+  return { label: 'Tickets', title: 'Open official tickets' };
 }
 
 function screeningsApiPath() {
@@ -419,13 +437,14 @@ function cardFor(item) {
   fragment.querySelector('.showing-date').textContent = primary.date || 'Date TBA';
   const showingTime = fragment.querySelector('.showing-time');
   showingTime.replaceChildren(...showings.map((showing) => {
+    const action = listingAction(showing);
     const time = document.createElement('a');
     time.className = 'showtime-option';
     time.href = showing.ticketUrl || showing.sourceUrl || '#';
     time.target = '_blank';
     time.rel = 'noopener noreferrer';
     time.textContent = showing.time || 'Time TBA';
-    time.title = `${showing.sourceStatus === 'partner-fallback' ? 'Open event listing' : 'Open official tickets'} for ${showing.time || 'this showtime'}`;
+    time.title = `${action.title} for ${showing.time || 'this showtime'}`;
     return time;
   }));
   fragment.querySelector('.showing-venue').textContent = primary.venue || 'Venue TBA';
@@ -454,8 +473,11 @@ function cardFor(item) {
   const detailsButton = fragment.querySelector('.details-button');
   detailsButton.dataset.id = primary.id;
   const ticketLink = fragment.querySelector('.ticket-link');
+  const ticketAction = listingAction(primary);
   ticketLink.href = primary.ticketUrl || primary.sourceUrl || '#';
-  ticketLink.setAttribute('aria-label', `Open official listing for ${primary.title} at ${primary.venue}`);
+  ticketLink.setAttribute('aria-label', `${ticketAction.title} for ${primary.title} at ${primary.venue}`);
+  const ticketArrow = ticketLink.querySelector('span');
+  ticketLink.replaceChildren(document.createTextNode(`${ticketAction.label} `), ticketArrow);
   return fragment;
 }
 
@@ -526,7 +548,8 @@ function openDetails(id) {
   const sourceName = item.sourceName || 'Official source';
   const sourceUrl = item.sourceUrl || item.ticketUrl || '#';
   const sourceActionLabel = item.sourceStatus === 'partner-fallback' ? 'Open partner listing' : `Verify on ${sourceName}`;
-  const ticketActionLabel = item.sourceStatus === 'partner-fallback' ? 'Open event listing' : 'Open official tickets';
+  const ticketAction = listingAction(item);
+  const ticketActionLabel = ticketAction.label;
   dialogContent.innerHTML = `<div class="dialog-body"><div class="dialog-poster" style="--poster-color:${escapeHtml(item.color || '#a92f23')}">${image}<span class="eyebrow">${escapeHtml(item.year || '—')} / ${escapeHtml(item.genre || 'Repertory')}</span><strong>${escapeHtml(item.title || 'Untitled screening')}</strong><span class="eyebrow">${escapeHtml(item.format || 'Format not listed')}</span></div><div class="dialog-info"><span class="eyebrow">Screening details</span><h2>${escapeHtml(item.title || 'Untitled screening')}</h2><p>${escapeHtml(item.synopsis || 'Check the official program page for the latest details.')}</p><div class="detail-row"><span>When</span><strong>${escapeHtml(item.date || 'Date TBA')} · ${escapeHtml(whenLabel)}</strong></div><div class="detail-row"><span>Where</span><strong>${escapeHtml(item.venue || 'Venue TBA')} · ${escapeHtml(item.neighborhood || item.distance || 'Los Angeles')}</strong></div>${addressRow}<div class="detail-row"><span>Director</span><strong>${escapeHtml(item.director || 'Not listed')}</strong></div>${notesRow}${checkedRow}<a class="dialog-ticket" href="${escapeHtml(item.ticketUrl || sourceUrl)}" target="_blank" rel="noopener noreferrer">${ticketActionLabel} ↗</a><a class="dialog-source" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(sourceActionLabel)} ↗</a><div class="dialog-actions"><button class="dialog-calendar" type="button" data-id="${escapeHtml(item.id)}">Add to calendar ↓</button><button class="dialog-share" type="button" data-id="${escapeHtml(item.id)}">Share screening ↗</button></div></div></div>`;
   const dialogImage = dialogContent.querySelector('.dialog-poster-image');
   if (dialogImage) dialogImage.addEventListener('error', () => dialogImage.remove());
@@ -535,6 +558,14 @@ function openDetails(id) {
 
 function calendarValue(date) {
   return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+}
+
+function icsEscape(value) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\r?\n/g, '\\n')
+    .replace(/;/g, '\\;')
+    .replace(/,/g, '\\,');
 }
 
 function downloadCalendar(id) {
@@ -554,7 +585,7 @@ function downloadCalendar(id) {
     start.setHours(hours, minutes, 0, 0);
   }
   const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
-  const ics = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Rerun//Screening//EN','BEGIN:VEVENT',`UID:${item.id}@rerun.app`,`DTSTAMP:${calendarValue(new Date())}`,`DTSTART:${calendarValue(start)}`,`DTEND:${calendarValue(end)}`,`SUMMARY:${item.title} at ${item.venue}`,`LOCATION:${item.venue}`,`DESCRIPTION:${item.synopsis} Tickets: ${item.ticketUrl}`,'END:VEVENT','END:VCALENDAR'].join('\r\n');
+  const ics = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Rerun//Screening//EN','BEGIN:VEVENT',`UID:${icsEscape(item.id)}@rerun.app`,`DTSTAMP:${calendarValue(new Date())}`,`DTSTART:${calendarValue(start)}`,`DTEND:${calendarValue(end)}`,`SUMMARY:${icsEscape(`${item.title} at ${item.venue}`)}`,`LOCATION:${icsEscape(item.venue)}`,`DESCRIPTION:${icsEscape(`${item.synopsis || ''} Tickets: ${item.ticketUrl || item.sourceUrl || ''}`)}`,'END:VEVENT','END:VCALENDAR'].join('\r\n');
   const url = URL.createObjectURL(new Blob([ics], { type:'text/calendar' }));
   const link = document.createElement('a');
   link.href = url;
@@ -621,6 +652,15 @@ function feedStatus(meta = {}) {
   ].filter(Boolean);
   const optionalNote = sourceNotes.length ? ` · ${sourceNotes.join(' · ')}` : '';
   const checked = formatCheckedAt(meta.lastRefresh);
+  const lastVerified = formatCheckedAt(meta.lastVerifiedAt);
+  const requiredUnavailable = (meta.sources || [])
+    .filter((source) => source.required !== false && source.status !== 'verified')
+    .map((source) => source.name)
+    .filter(Boolean);
+  if (meta.servingLastVerifiedSnapshot) {
+    const refreshNote = requiredUnavailable.length ? ` · refreshing ${requiredUnavailable.join(', ')}` : ' · refreshing official sources';
+    return `Showing last verified index${lastVerified ? ` · verified ${lastVerified}` : ''}${refreshNote}`;
+  }
   if (meta.refreshStatus === 'ok' && !meta.stale) return `Verified feed · ${requiredCount} required sources${optionalNote}${checked ? ` · ${checked}` : ''}`;
   if (meta.refreshStatus === 'degraded') return `Partial feed · ${sourceCount} sources${checked ? ` · ${checked}` : ''}`;
   if (meta.refreshStatus === 'error') return `Official feed unavailable · last verified ${checked || 'unknown'}`;
@@ -632,14 +672,14 @@ function incompleteFeedStatus(payload = {}) {
   const refreshStatus = payload.meta?.refreshStatus || payload.meta?.status || '';
   const initialIndex = ['seed', 'unknown'].includes(String(refreshStatus).toLowerCase())
     || sources.some((source) => ['seed', 'unknown'].includes(String(source.status || '').toLowerCase()));
-  if (initialIndex) return 'Preparing the initial live index…';
+  if (initialIndex) return 'Checking official sources for the first live index…';
   const waitingSources = sources.filter((source) => source.required !== false && source.status !== 'verified');
   const waiting = waitingSources.map((source) => source.name).filter(Boolean);
   const firstError = waitingSources.flatMap((source) => source.errors || []).find(Boolean);
   const reason = firstError ? ` · ${String(firstError).replace(/\s+/g, ' ').slice(0, 120)}` : '';
   return waiting.length
-    ? `Waiting for complete live index · ${waiting.join(', ')}${reason}`
-    : 'Waiting for complete live index · official sources are still being checked';
+    ? `Verifying official sources · ${waiting.join(', ')}${reason}`
+    : 'Checking official sources · building the live index';
 }
 
 function scheduleIndexRetry(requestId, retryAfterSeconds = 30) {
@@ -654,14 +694,14 @@ function scheduleIndexRetry(requestId, retryAfterSeconds = 30) {
 
 async function loadScreenings(forceRefresh = false) {
   if (!canUseApi) {
-    setLoadingState('Waiting for complete live index · open with the Python server');
+    setLoadingState('Open Rerun with the local server to load listings.');
     return false;
   }
   window.clearTimeout(retryTimer);
   retryTimer = null;
   const requestId = ++apiRequestId;
   setRefreshBusy(true);
-  setLoadingState('Loading the latest verified index…');
+  setLoadingState('Checking the latest official listings…');
   try {
     const response = await fetch(screeningsApiPath(), { headers: { Accept: 'application/json' } });
     const payload = await response.json().catch(() => ({}));
@@ -674,12 +714,15 @@ async function loadScreenings(forceRefresh = false) {
     window.clearTimeout(retryTimer);
     retryTimer = null;
     screenings = Array.isArray(payload.data) ? payload.data : [];
-    setDataStatus(feedStatus(payload.meta), payload.meta?.stale ? 'fallback' : 'default');
+    setDataStatus(
+      feedStatus(payload.meta),
+      payload.meta?.servingLastVerifiedSnapshot ? 'stale' : (payload.meta?.stale ? 'fallback' : 'default'),
+    );
     render();
     return true;
   } catch (error) {
     if (requestId !== apiRequestId) return;
-    setDataStatus('Waiting for complete live index · reconnecting…', 'fallback');
+    setDataStatus('Reconnecting to official listings…', 'fallback');
     scheduleIndexRetry(requestId, 30);
     return false;
   } finally {
@@ -766,19 +809,23 @@ document.querySelector('#newsletter-form')?.addEventListener('submit', async (ev
   const form = event.currentTarget;
   const message = document.querySelector('#form-message');
   const email = form.querySelector('input[type="email"]').value;
-  message.textContent = 'Saving your alert…';
+  const website = form.querySelector('[name="website"]')?.value || '';
+  message.textContent = 'Joining the Rerun list…';
   try {
     const response = await fetch(apiUrl('/api/notify'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ email })
+      body: JSON.stringify({ email, website })
     });
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || 'Could not save alert.');
-    message.textContent = payload.message || 'You’re on the list — see you at the movies.';
+    if (!response.ok) {
+      message.textContent = payload.error || 'Could not save your email.';
+      return;
+    }
+    message.textContent = payload.message || 'You’re on the Rerun list.';
     form.reset();
   } catch (error) {
-    message.textContent = canUseApi ? 'The alert service is offline — try again in a moment.' : 'Preview mode: start the Rerun API to save alerts.';
+    message.textContent = canUseApi ? 'The signup service is offline — try again in a moment.' : 'Preview mode: start the Rerun API to join the list.';
   }
 });
 
@@ -788,5 +835,5 @@ const initialScreening = new URLSearchParams(location.search).get('screening');
 if (initialScreening) openDetails(initialScreening);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20260909-planning-filters'));
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20260922-launch'));
 }
