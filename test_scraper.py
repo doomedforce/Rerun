@@ -294,6 +294,16 @@ UCLA_RELATED_TIME_HTML = """
 </body></html>
 """
 
+UCLA_SERIES_HTML = """
+<html><body><h1>Dorothy Dandridge</h1><p>Billy Wilder Theater</p>
+<article><h2><a href="/events/introducing-dorothy-dandridge-2026-12-02/">Introducing Dorothy Dandridge</a></h2>
+<p>Dec 2, 20267:30 pm</p><p>35mm</p></article>
+<article><h2><a href="/events/malaga-decks-ran-red-2026-12-13/">Malaga / Decks Ran Red</a></h2>
+<p>Dec 13, 2026</p><p>7:00 pm</p><p>16mm</p></article>
+<h2>Stay updated</h2><a href="/events/unrelated-nav-event-2026-12-20/">Unrelated nav event</a>
+<p>Dec 20, 2026</p><p>9:45 pm</p></body></html>
+"""
+
 UCLA_SITEMAP_INDEX_XML = """
 <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <sitemap><loc>https://www.cinema.ucla.edu/events-sitemap.xml</loc></sitemap>
@@ -399,7 +409,12 @@ class ScraperTests(unittest.TestCase):
             "https://www.academymuseum.org/programs/detail/own-event-without-a-posted-time/",
             NOW,
         )
-        self.assertIsNone(event)
+        self.assertIsNotNone(event)
+        self.assertEqual(event["startAt"], "2026-09-24T12:00:00-07:00")
+        self.assertEqual(event["time"], "Time TBA")
+        self.assertEqual(event["ticketStatus"], "details")
+        self.assertEqual(event["sourceStatus"], "verified-academy-date-only")
+        self.assertNotIn("9:45", event["notes"])
 
     def test_academy_scraper_traverses_calendar_and_detail_pages(self):
         calendar_page_2 = '<a href="/programs/detail/second-screening-019f-example">Second Screening</a>'
@@ -474,6 +489,39 @@ class ScraperTests(unittest.TestCase):
         self.assertEqual(
             scraper.discover_ucla_event_urls(UCLA_EVENT_SITEMAP_XML),
             ["https://cinema.ucla.edu/events/introducing-dorothy-dandridge-2026-12-02/"],
+        )
+
+    def test_ucla_series_cards_supply_exact_upcoming_showtimes(self):
+        self.assertEqual(
+            scraper.discover_ucla_series_urls(
+                '<a href="/series/dorothy-dandridge-2026/">Dorothy Dandridge</a>'
+            ),
+            ["https://www.cinema.ucla.edu/series/dorothy-dandridge-2026/"],
+        )
+        events = scraper.parse_ucla_series_events(
+            UCLA_SERIES_HTML,
+            "https://www.cinema.ucla.edu/series/dorothy-dandridge-2026/",
+            NOW,
+        )
+        self.assertEqual([event["title"] for event in events], ["Introducing Dorothy Dandridge", "Malaga / Decks Ran Red"])
+        self.assertEqual(events[0]["startAt"], "2026-12-02T19:30:00-08:00")
+        self.assertEqual(events[1]["startAt"], "2026-12-13T19:00:00-08:00")
+        self.assertEqual(events[0]["format"], "35mm")
+        self.assertEqual(events[0]["ticketStatus"], "details")
+
+    def test_ucla_scraper_uses_static_series_cards_when_indexes_are_client_rendered(self):
+        pages = {
+            scraper.UCLA_EVENTS_URL: "<html><p>Data Loading in Progress</p></html>",
+            scraper.UCLA_SERIES_URL: "<html><p>Data Loading in Progress</p></html>",
+            **{url: "<urlset></urlset>" for url in scraper.UCLA_SITEMAP_URLS},
+            **{url: UCLA_SERIES_HTML for url in scraper.UCLA_SERIES_SEED_URLS},
+        }
+        result = scraper._scrape_ucla_film_archive(NOW, FakeFetcher(pages), force=True)
+        self.assertEqual(result["source"]["status"], "verified")
+        self.assertEqual(result["source"]["eventCount"], 2)
+        self.assertEqual(
+            [event["title"] for event in result["events"]],
+            ["Introducing Dorothy Dandridge", "Malaga / Decks Ran Red"],
         )
 
     def test_ucla_parser_stops_before_more_in_this_series(self):

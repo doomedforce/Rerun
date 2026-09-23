@@ -151,12 +151,21 @@ FILMFORUM_SCHEDULE_URL = "https://www.lafilmforum.org/schedule/"
 OLD_TOWN_HOME_URL = "https://www.oldtownmusichall.org/home/"
 UCLA_EVENTS_URL = "https://www.cinema.ucla.edu/events/"
 UCLA_SERIES_URL = "https://www.cinema.ucla.edu/series/"
+UCLA_SERIES_SEED_URLS = (
+    # The public series index is client-rendered, but active series pages
+    # expose their event cards in server-rendered HTML. Keep current official
+    # seeds while the sitemap traversal below discovers the broader graph.
+    "https://www.cinema.ucla.edu/series/the-art-of-the-benshi-2026/",
+    "https://www.cinema.ucla.edu/series/dorothy-dandridge-2026/",
+)
 UCLA_SITEMAP_URL = "https://www.cinema.ucla.edu/sitemap.xml"
 UCLA_SITEMAP_URLS = (
     # UCLA's event sitemap is the most direct server-readable discovery path.
     # Keep the generic sitemap variants below for deployments that rename it.
     "https://www.cinema.ucla.edu/events-sitemap.xml",
     "https://cinema.ucla.edu/events-sitemap.xml",
+    "https://www.cinema.ucla.edu/series-sitemap.xml",
+    "https://cinema.ucla.edu/series-sitemap.xml",
     UCLA_SITEMAP_URL,
     "https://cinema.ucla.edu/sitemap.xml",
     "https://www.cinema.ucla.edu/sitemap_index.xml",
@@ -938,6 +947,38 @@ def academy_datetime_candidates(
     return sorted(unique.values())
 
 
+def academy_date_only_candidates(
+    parser: PageParser,
+    now: datetime,
+    visible_lines: Iterable[str] | None = None,
+) -> list[datetime]:
+    """Return the page's own future dates when Academy has not posted a time.
+
+    Academy currently publishes a number of genuine screening pages with a
+    date but no clock time. Representing those as time-TBA listings is more
+    useful, and substantially more honest, than borrowing a time from a
+    related event or omitting the screening altogether.
+    """
+
+    current = as_la(now)
+    lines = primary_event_lines(parser.lines) if visible_lines is None else list(visible_lines)
+    candidates: dict[str, datetime] = {}
+    for line in lines:
+        date_parts = academy_date_parts(line)
+        if not date_parts:
+            continue
+        year, month, day = date_parts
+        try:
+            # Noon is only a stable sorting placeholder; ``time_label`` below
+            # preserves the official state as "Time TBA" in the UI.
+            candidate = datetime(year, month, day, 12, 0, tzinfo=LA_TZ)
+        except ValueError:
+            continue
+        if candidate.date() >= current.date():
+            candidates[candidate.date().isoformat()] = candidate
+    return sorted(candidates.values())
+
+
 def academy_labelled_screening(html: str) -> bool:
     parser = parse_html(html)
     labels = {normalize_key(line).rstrip(":") for line in primary_event_lines(parser.lines)}
@@ -1059,8 +1100,20 @@ def parse_academy_event(html: str, page_url: str, now: datetime | None = None) -
         return None
     event_lines = primary_event_lines(parser.lines)
     dates = academy_datetime_candidates(html, parser, current, title=title, visible_lines=event_lines)
+    time_label: str | None = None
+    ticket_status = ""
+    detail_status = "verified-academy-calendar"
     if not dates:
-        return None
+        # Academy's current event detail pages can legitimately publish the
+        # screening date before they publish a clock time.  Do not borrow a
+        # time from a related card (or suppress a real Screening outright):
+        # retain the official date and make the unresolved time explicit.
+        dates = academy_date_only_candidates(parser, current, event_lines)
+        if not dates:
+            return None
+        time_label = "Time TBA"
+        ticket_status = "details"
+        detail_status = "verified-academy-date-only"
     documents = academy_json_documents(html)
     synopsis = academy_value(documents, ("description", "shortDescription", "summary", "synopsis"))
     format_name = academy_value(documents, ("format", "presentationFormat", "filmFormat")) or next(
@@ -1076,6 +1129,8 @@ def parse_academy_event(html: str, page_url: str, now: datetime | None = None) -
         lowered = normalize_key(line)
         if any(marker in lowered for marker in ("in person", "selected by", "accessible screening", "premiere")):
             note_lines.append(line)
+    if time_label:
+        note_lines.append("Official time not posted")
     notes = " · ".join(dict.fromkeys(note_lines))[:220]
     image = (absolute_images(parser, page_url) or [""])[0]
     return make_event(
@@ -1085,7 +1140,10 @@ def parse_academy_event(html: str, page_url: str, now: datetime | None = None) -
         start_at=dates[0],
         now=current,
         page_url=page_url,
-        ticket_url=pick_ticket_url(parser, page_url),
+        # Until Academy has posted a time, the event page is the only safe
+        # destination.  A generic ticket link can otherwise imply a time is
+        # confirmed when it is not.
+        ticket_url=page_url if time_label else pick_ticket_url(parser, page_url),
         venue="Academy Museum of Motion Pictures",
         year=year,
         format_name=format_name,
@@ -1093,7 +1151,9 @@ def parse_academy_event(html: str, page_url: str, now: datetime | None = None) -
         notes=notes,
         image=image,
         source_page_url=ACADEMY_CALENDAR_URL,
-        detail_status="verified-academy-calendar",
+        detail_status=detail_status,
+        time_label=time_label,
+        ticket_status=ticket_status,
     )
 
 
@@ -1543,6 +1603,8 @@ def make_event(
     image: str = "",
     source_page_url: str = "",
     detail_status: str = "verified",
+    time_label: str | None = None,
+    ticket_status: str = "",
 ) -> dict:
     venue_data = venue_info(venue, source_name)
     local_start = as_la(start_at)
@@ -1565,7 +1627,7 @@ def make_event(
         "distance": venue_data["neighborhood"],
         "date": display_date(local_start, now),
         "dateGroup": date_group(local_start, now),
-        "time": display_time(local_start),
+        "time": time_label if time_label is not None else display_time(local_start),
         "startAt": local_start.isoformat(),
         "genre": genre,
         "color": color_for(clean_title, source_id),
@@ -1576,6 +1638,7 @@ def make_event(
         "synopsis": clean_synopsis,
         "notes": notes,
         "ticketUrl": ticket_url or page_url,
+        "ticketStatus": ticket_status,
         "sourceUrl": page_url,
         "sourcePageUrl": source_page_url or page_url,
         "sourceName": source_name,
@@ -2614,6 +2677,11 @@ def parse_old_town_movie(html: str, page_url: str, now: datetime | None = None) 
 
 UCLA_HOSTS = {"cinema.ucla.edu", "www.cinema.ucla.edu"}
 UCLA_EVENT_URL_DATE_RE = re.compile(r"-(20\d{2})-(\d{2})-(\d{2})/?$")
+UCLA_SERIES_URL_YEAR_RE = re.compile(r"-(20\d{2})/?$", re.I)
+UCLA_COMPACT_YEAR_TIME_RE = re.compile(
+    r"(20\d{2})(?=\d{1,2}:\d{2}\s*[ap]\.?(?:m)\.?)",
+    re.I,
+)
 
 
 def _ucla_normalize_url(value: str, base_url: str) -> str:
@@ -2670,6 +2738,43 @@ def discover_ucla_event_urls(html: str, base_url: str = UCLA_EVENTS_URL) -> list
     return urls
 
 
+def discover_ucla_series_urls(html: str, base_url: str = UCLA_SERIES_URL) -> list[str]:
+    """Find UCLA's server-rendered series pages from HTML or sitemap XML.
+
+    The Archive's public ``/series/`` directory is currently hydrated in the
+    browser.  Individual series pages, by contrast, expose their upcoming
+    event cards in the initial HTML, so they are a useful first-party schedule
+    feed when the general calendar has no cards to parse.
+    """
+
+    parser = parse_html(html)
+    candidates = [urljoin(base_url, link.get("href", "")) for link in parser.links]
+    candidates.extend(
+        unescape(match.group(1)).strip()
+        for match in re.finditer(r"<loc[^>]*>(.*?)</loc>", html, re.I | re.S)
+    )
+    candidates.extend(
+        urljoin(base_url, match.group(0))
+        for match in re.finditer(
+            r"(?:https?://[^\"'<> ]+)?/series/[A-Za-z0-9%._~:/?#\[\]@!$&'()*+,;=-]+",
+            html.replace("\\/", "/"),
+        )
+    )
+    urls: list[str] = []
+    for candidate in candidates:
+        normalized = _ucla_normalize_url(candidate, base_url)
+        if not normalized:
+            continue
+        parsed = urlsplit(normalized)
+        path = parsed.path.rstrip("/")
+        if path == "/series" or not path.startswith("/series/"):
+            continue
+        normalized = urlunsplit(("https", parsed.netloc.lower(), path + "/", "", ""))
+        if normalized not in urls:
+            urls.append(normalized)
+    return urls
+
+
 def ucla_labelled_screening(parser: PageParser) -> bool:
     lines = [normalize_key(line) for line in primary_event_lines(parser.lines)]
     return any(
@@ -2709,6 +2814,135 @@ def prioritize_ucla_event_urls(urls: Iterable[str], now: datetime) -> list[str]:
         ranked.append((0 if event_date else 1, event_date or datetime.max.replace(tzinfo=LA_TZ), index, page_url))
     ranked.sort(key=lambda value: value[:3])
     return [page_url for _, _, _, page_url in ranked]
+
+
+def prioritize_ucla_series_urls(urls: Iterable[str], now: datetime) -> list[str]:
+    """Keep current/future UCLA series before archival series sitemap URLs."""
+
+    current_year = as_la(now).year
+    ranked: list[tuple[int, int, int, str]] = []
+    for index, page_url in enumerate(dict.fromkeys(urls)):
+        match = UCLA_SERIES_URL_YEAR_RE.search(urlsplit(page_url).path)
+        year = int(match.group(1)) if match else None
+        if year is not None and year < current_year:
+            continue
+        rank = 0 if year == current_year else 1 if year is not None else 2
+        ranked.append((rank, year or 9999, index, page_url))
+    ranked.sort(key=lambda value: value[:3])
+    return [page_url for _, _, _, page_url in ranked]
+
+
+def parse_ucla_series_datetime(lines: list[str], index: int) -> datetime | None:
+    """Read a date/time from one UCLA series-card line or its nearby time."""
+
+    date_line = normalize_space(lines[index])
+    compact_date_line = UCLA_COMPACT_YEAR_TIME_RE.sub(r"\1 ", date_line)
+    candidate = parse_academy_text_datetime(compact_date_line)
+    if candidate:
+        return candidate
+    if not academy_date_parts(date_line):
+        return None
+    # Some responsive card layouts put the date and time in adjacent elements.
+    # Limit the look-ahead to this card so the next screening cannot lend it a
+    # showtime.
+    for time_line in lines[index + 1:index + 4]:
+        if not TIME_RE.search(time_line):
+            continue
+        candidate = parse_academy_text_datetime(f"{date_line} {time_line}")
+        if candidate:
+            return candidate
+    return None
+
+
+def parse_ucla_series_events(html: str, page_url: str, now: datetime | None = None) -> list[dict]:
+    """Parse exact future event cards from one official UCLA series page."""
+
+    current = as_la(now)
+    parser = parse_html(html)
+    linked_events: dict[str, tuple[str, str]] = {}
+    for link in parser.links:
+        event_url = _ucla_normalize_url(link.get("href", ""), page_url)
+        if not event_url or not urlsplit(event_url).path.rstrip("/").startswith("/events/"):
+            continue
+        title = normalize_space(link.get("text", ""))
+        if not title or not is_probable_screening_title(title):
+            continue
+        canonical_url = urlunsplit(
+            ("https", urlsplit(event_url).netloc.lower(), urlsplit(event_url).path.rstrip("/") + "/", "", "")
+        )
+        linked_events.setdefault(normalize_key(title), (title, canonical_url))
+
+    if not linked_events:
+        return []
+
+    lines = primary_event_lines(parser.lines)
+    series_name = next(
+        (heading["text"] for heading in parser.headings if heading.get("tag") == "h1" and heading.get("text")),
+        "UCLA Film & Television Archive",
+    )
+    venue = next(
+        (line for line in lines if "theater" in normalize_key(line) or "theatre" in normalize_key(line)),
+        "Billy Wilder Theater",
+    )
+    image = (absolute_images(parser, page_url) or [""])[0]
+    events: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for index in range(len(lines)):
+        start_at = parse_ucla_series_datetime(lines, index)
+        if not start_at or as_la(start_at) <= current:
+            continue
+        title = ""
+        event_url = ""
+        # Event titles are direct links on UCLA's static series cards.  Match
+        # only a nearby linked title, rather than guessing from surrounding
+        # prose, to keep gallery/nav text out of the calendar.
+        for line in reversed(lines[max(0, index - 10):index]):
+            linked = linked_events.get(normalize_key(line))
+            if linked:
+                title, event_url = linked
+                break
+        if not title or not event_url:
+            continue
+        key = (screening_title_key(title), as_la(start_at).isoformat())
+        if key in seen:
+            continue
+        seen.add(key)
+        next_title_index = next(
+            (
+                candidate_index
+                for candidate_index in range(index + 1, len(lines))
+                if normalize_key(lines[candidate_index]) in linked_events
+            ),
+            min(len(lines), index + 7),
+        )
+        card_lines = lines[index + 1:next_title_index]
+        notes = " · ".join(
+            dict.fromkeys(
+                line
+                for line in card_lines
+                if any(marker in normalize_key(line) for marker in ("in person", "guest", "introduced by", "free admission", "first come"))
+            )
+        )[:220]
+        events.append(
+            make_event(
+                source_id="ucla-film-archive",
+                source_name="UCLA Film & Television Archive",
+                title=title,
+                start_at=start_at,
+                now=current,
+                page_url=event_url,
+                ticket_url=event_url,
+                venue=venue,
+                format_name=vista_format_from_text(card_lines),
+                synopsis=f"Official UCLA Film & Television Archive listing in {series_name}.",
+                notes=notes,
+                image=image,
+                source_page_url=page_url,
+                detail_status="verified-ucla-series",
+                ticket_status="details",
+            )
+        )
+    return events
 
 
 def parse_ucla_event(html: str, page_url: str, now: datetime | None = None) -> dict | None:
@@ -3675,12 +3909,14 @@ def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: 
     pages_checked = 0
     try:
         event_urls: list[str] = []
+        discovered_series_urls: list[str] = []
         for index_url in (UCLA_EVENTS_URL, UCLA_SERIES_URL):
             try:
                 index_html, index_checked_at, _ = fetcher.fetch(index_url, force=force)
                 checked_at = index_checked_at or checked_at
                 pages_checked += 1
                 event_urls.extend(discover_ucla_event_urls(index_html, index_url))
+                discovered_series_urls.extend(discover_ucla_series_urls(index_html, index_url))
             except Exception as error:
                 warnings.append(f"{index_url}: {error}")
         if not event_urls:
@@ -3700,11 +3936,41 @@ def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: 
                     checked_at = sitemap_checked_at or checked_at
                     pages_checked += 1
                     event_urls.extend(discover_ucla_event_urls(sitemap_html, UCLA_EVENTS_URL))
+                    discovered_series_urls.extend(discover_ucla_series_urls(sitemap_html, UCLA_SERIES_URL))
                     for child_url in discover_ucla_sitemap_urls(sitemap_html, sitemap_url):
                         if child_url not in checked_sitemaps and child_url not in sitemap_queue:
                             sitemap_queue.append(child_url)
                 except Exception as error:
                     warnings.append(f"{sitemap_url}: {error}")
+
+        # UCLA's broad event and series indexes are client-rendered, while
+        # individual current series pages contain server-rendered event cards
+        # with the official date/time.  Treat those cards as a first-party
+        # schedule source, and keep the known current seeds only as a bridge
+        # until the sitemap/index tells us about the next program cycle.
+        series_urls = prioritize_ucla_series_urls(
+            [*UCLA_SERIES_SEED_URLS, *discovered_series_urls],
+            current,
+        )[:DEFAULT_MAX_DETAIL_EVENTS]
+        series_results = parallel_fetch(fetcher, series_urls, force=force, max_workers=12)
+        for series_url in series_urls:
+            result = series_results.get(series_url)
+            if isinstance(result, Exception):
+                warnings.append(f"{series_url}: {result}")
+                continue
+            if not result:
+                continue
+            series_html, series_checked_at, _ = result
+            checked_at = series_checked_at or checked_at
+            pages_checked += 1
+            # A series card is already an exact date/time authority.  Detail
+            # pages remain useful enrichment, but may not remove an otherwise
+            # valid card if their content structure changes.
+            for event in parse_ucla_series_events(series_html, series_url, current):
+                event["sourceLastChecked"] = series_checked_at or checked_at
+                events.append(event)
+            event_urls.extend(discover_ucla_event_urls(series_html, series_url))
+
         # The sitemap contains years of archival event pages. UCLA's dated
         # slugs let us skip historical entries and fetch upcoming pages first,
         # rather than exhausting the bounded detail budget on old listings.
@@ -3723,13 +3989,13 @@ def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: 
             if event:
                 event["sourceLastChecked"] = page_checked_at or checked_at
                 events.append(event)
-        if not event_urls:
-            warnings.append("Events index: no future event pages discovered")
+        if not event_urls and not series_urls:
+            warnings.append("Events index: no future event pages or current series pages discovered")
     except Exception as error:
         errors.append(f"UCLA Film & Television Archive: {error}")
     events = deduplicate_events(events)
     if not events and pages_checked:
-        warnings.append("No future UCLA screenings with explicit showtimes found")
+        warnings.append("No future UCLA screenings with explicit showtimes found in event or series pages")
     if not pages_checked:
         errors.append("No UCLA Film & Television Archive source pages could be reached")
     source = {

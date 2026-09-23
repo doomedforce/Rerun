@@ -117,7 +117,9 @@ official Screenings & Series index, current series pages, and the site's
 sitemap or sitemap index. It accepts only
 detail pages explicitly labelled `Screenings` or `Screening from Series`, so
 conversations, book signings, special events, exhibitions, and related-event
-links are excluded. The Academy Museum source is optional for feed health, so
+links are excluded. If Academy has published a screening date but not its
+clock time, Rerun keeps the date as `Time TBA` and links to the official event
+details rather than inferring a time from a related card. The Academy Museum source is optional for feed health, so
 a temporary museum-site outage does not erase the other official listings.
 
 Fine Arts Theatre Beverly Hills uses its official Veezi sessions feed, reusing
@@ -127,8 +129,10 @@ page is authoritative for its own ticket link. Old Town Music Hall is
 traversed from its official homepage into movie pages and their dated
 showtimes. UCLA Film & Television Archive traversal checks the official events
 and series indexes, then walks sitemap indexes and child sitemaps when those
-client-rendered lists contain no links; only future pages with screening or
-film-program markers are retained.
+client-rendered lists contain no links. It also reads exact future event cards
+from UCLA's server-rendered current-series pages, whose dates and times remain
+available even when the broad calendar is JavaScript-only; only future pages
+with screening or film-program markers are retained.
 All four sources are optional so a source-specific outage cannot invalidate the
 complete feed from the existing required venues.
 

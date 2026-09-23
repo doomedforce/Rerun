@@ -560,6 +560,17 @@ function calendarValue(date) {
   return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
 }
 
+function calendarDateOnlyValue(value, offsetDays = 0) {
+  const sourceDate = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (sourceDate) {
+    const date = new Date(Date.UTC(Number(sourceDate[1]), Number(sourceDate[2]) - 1, Number(sourceDate[3]) + offsetDays));
+    return date.toISOString().slice(0, 10).replace(/-/g, '');
+  }
+  const date = value instanceof Date ? new Date(value) : new Date();
+  date.setDate(date.getDate() + offsetDays);
+  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+}
+
 function icsEscape(value) {
   return String(value ?? '')
     .replace(/\\/g, '\\\\')
@@ -577,7 +588,8 @@ function downloadCalendar(id) {
     const daysUntilSaturday = (6 - start.getDay() + 7) % 7;
     start.setDate(start.getDate() + daysUntilSaturday);
   }
-  if (item.time) {
+  const hasConfirmedTime = /^\d{1,2}:\d{2}\s(?:AM|PM)$/i.test(item.time || '');
+  if (hasConfirmedTime) {
     const [clock, meridiem] = item.time.split(' ');
     let [hours, minutes] = clock.split(':').map(Number);
     if (meridiem === 'PM' && hours !== 12) hours += 12;
@@ -585,7 +597,13 @@ function downloadCalendar(id) {
     start.setHours(hours, minutes, 0, 0);
   }
   const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
-  const ics = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Rerun//Screening//EN','BEGIN:VEVENT',`UID:${icsEscape(item.id)}@rerun.app`,`DTSTAMP:${calendarValue(new Date())}`,`DTSTART:${calendarValue(start)}`,`DTEND:${calendarValue(end)}`,`SUMMARY:${icsEscape(`${item.title} at ${item.venue}`)}`,`LOCATION:${icsEscape(item.venue)}`,`DESCRIPTION:${icsEscape(`${item.synopsis || ''} Tickets: ${item.ticketUrl || item.sourceUrl || ''}`)}`,'END:VEVENT','END:VCALENDAR'].join('\r\n');
+  const startLine = hasConfirmedTime
+    ? `DTSTART:${calendarValue(start)}`
+    : `DTSTART;VALUE=DATE:${calendarDateOnlyValue(item.startAt || start)}`;
+  const endLine = hasConfirmedTime
+    ? `DTEND:${calendarValue(end)}`
+    : `DTEND;VALUE=DATE:${calendarDateOnlyValue(item.startAt || start, 1)}`;
+  const ics = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Rerun//Screening//EN','BEGIN:VEVENT',`UID:${icsEscape(item.id)}@rerun.app`,`DTSTAMP:${calendarValue(new Date())}`,startLine,endLine,`SUMMARY:${icsEscape(`${item.title} at ${item.venue}`)}`,`LOCATION:${icsEscape(item.venue)}`,`DESCRIPTION:${icsEscape(`${item.synopsis || ''} Tickets: ${item.ticketUrl || item.sourceUrl || ''}`)}`,'END:VEVENT','END:VCALENDAR'].join('\r\n');
   const url = URL.createObjectURL(new Blob([ics], { type:'text/calendar' }));
   const link = document.createElement('a');
   link.href = url;
