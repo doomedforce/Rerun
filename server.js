@@ -28,7 +28,7 @@ const MIME_TYPES = {
 
 const BLOCKED_STATIC = new Set(['/server.js', '/server.py', '/scraper.py', '/refresh.py', '/refresh_worker.py', '/alerts.py', '/instagram_publisher.py', '/package.json', '/README.md', '/data/subscribers.json', '/data/screenings.json', '/data/venues.json', '/data/rerun.sqlite3', '/data/rerun.sqlite3-shm', '/data/rerun.sqlite3-wal', '/data/sources.json', '/data/last-refresh.json', '/data/snapshot.json', '/data/last-verified-snapshot.json', '/data/worker-state.json', '/data/instagram-post-state.json']);
 const RETRY_BACKOFF_MS = Number(process.env.RERUN_REFRESH_RETRY_SECONDS || 600) * 1000;
-const FEED_POLICY_VERSION = 24;
+const FEED_POLICY_VERSION = 26;
 const REFRESH_TOKEN = process.env.RERUN_REFRESH_TOKEN || '';
 const NOTIFY_WINDOW_MS = Math.max(60, Number(process.env.RERUN_NOTIFY_WINDOW_SECONDS || 600)) * 1000;
 const NOTIFY_MAX_ATTEMPTS = Math.max(1, Number(process.env.RERUN_NOTIFY_MAX_ATTEMPTS || 5));
@@ -45,7 +45,8 @@ const IMAGE_ALLOWED_HOSTS = new Set([
   'egyptiantheatre.com', 'www.egyptiantheatre.com', 'netflixstrapicentralcms.blob.core.windows.net',
   'fineartstheatrebh.com', 'ticketing.uswest.veezi.com', 'lafilmforum.org', 'www.lafilmforum.org',
   'oldtownmusichall.org', 'www.oldtownmusichall.org', 'indy-systems.imgix.net', 'cinema.ucla.edu', 'www.cinema.ucla.edu',
-  'wearebraindead.com', 'www.wearebraindead.com', 'studios.wearebraindead.com'
+  'wearebraindead.com', 'www.wearebraindead.com', 'studios.wearebraindead.com',
+  'image.tmdb.org'
 ]);
 let refreshInFlight = null;
 let refreshWorker = null;

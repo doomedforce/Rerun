@@ -22,7 +22,7 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -124,6 +124,14 @@ DEFAULT_MAX_DETAIL_EVENTS = int(os.environ.get("RERUN_MAX_DETAIL_EVENTS", "60"))
 DEFAULT_REQUEST_GAP = float(os.environ.get("RERUN_REQUEST_GAP_SECONDS", "0.08"))
 DEFAULT_HTTP_RETRIES = int(os.environ.get("RERUN_HTTP_RETRIES", "1"))
 DEFAULT_RETRY_MAX_SECONDS = float(os.environ.get("RERUN_RETRY_MAX_SECONDS", "4"))
+TMDB_SEARCH_MOVIE_URL = "https://api.themoviedb.org/3/search/movie"
+TMDB_WEB_MOVIE_URL = "https://www.themoviedb.org/movie"
+TMDB_IMAGE_BASE_URL = os.environ.get("RERUN_TMDB_IMAGE_BASE_URL", "https://image.tmdb.org/t/p/w500").rstrip("/")
+TMDB_CACHE_TTL = max(0, int(os.environ.get("RERUN_TMDB_CACHE_TTL_SECONDS", str(30 * 24 * 60 * 60))))
+TMDB_TIMEOUT = max(1.0, float(os.environ.get("RERUN_TMDB_HTTP_TIMEOUT", "6")))
+TMDB_MAX_LOOKUPS = max(0, int(os.environ.get("RERUN_TMDB_MAX_LOOKUPS", "40")))
+TMDB_POSTER_PATH_RE = re.compile(r"^/[A-Za-z0-9._-]+$")
+TMDB_RELEASE_YEAR_RE = re.compile(r"^(?:18|19|20)\d{2}$")
 
 TRANSIENT_HTTP_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
@@ -1376,6 +1384,219 @@ class CachedFetcher:
         raise RuntimeError(f"Unable to fetch {url}")
 
 
+def tmdb_event_lookup_key(event: dict) -> tuple[str, str] | None:
+    """Return a deliberately conservative TMDB lookup key for one film.
+
+    TMDB title search is useful artwork enrichment, not an authoritative
+    program source. Requiring one release year and rejecting obvious multi-film
+    bills prevents a popular but wrong poster from being assigned to a card.
+    """
+
+    title = normalize_space(event.get("title", ""))
+    year = normalize_space(event.get("year", ""))
+    if not title or not TMDB_RELEASE_YEAR_RE.fullmatch(year):
+        return None
+    if re.search(r"\s(?:/|\||\+)\s", title) or not is_probable_screening_title(title):
+        return None
+    return normalize_key(title), year
+
+
+def select_tmdb_movie_match(results: object, title: object, year: object, image_base_url: str = TMDB_IMAGE_BASE_URL) -> dict | None:
+    """Select only an exact title-and-year TMDB result with a usable poster."""
+
+    wanted_title = normalize_key(title)
+    wanted_year = normalize_space(year)
+    if not wanted_title or not TMDB_RELEASE_YEAR_RE.fullmatch(wanted_year) or not isinstance(results, list):
+        return None
+    for candidate in results:
+        if not isinstance(candidate, dict):
+            continue
+        candidate_titles = {
+            normalize_key(candidate.get("title", "")),
+            normalize_key(candidate.get("original_title", "")),
+        }
+        if wanted_title not in candidate_titles:
+            continue
+        release_date = normalize_space(candidate.get("release_date", ""))
+        if release_date[:4] != wanted_year:
+            continue
+        poster_path = normalize_space(candidate.get("poster_path", ""))
+        movie_id = normalize_space(candidate.get("id", ""))
+        if not TMDB_POSTER_PATH_RE.fullmatch(poster_path) or not movie_id.isdigit():
+            continue
+        return {
+            "movieId": movie_id,
+            "posterUrl": f"{image_base_url.rstrip('/')}/{poster_path.lstrip('/')}",
+            "tmdbUrl": f"{TMDB_WEB_MOVIE_URL}/{movie_id}",
+        }
+    return None
+
+
+class TmdbArtworkClient:
+    """Small cached TMDB search client used only for missing venue artwork."""
+
+    def __init__(
+        self,
+        *,
+        cache_dir: Path | None = None,
+        api_key: str | None = None,
+        read_access_token: str | None = None,
+        cache_ttl: int = TMDB_CACHE_TTL,
+        timeout: float = TMDB_TIMEOUT,
+        image_base_url: str = TMDB_IMAGE_BASE_URL,
+    ) -> None:
+        self.cache_dir = cache_dir or CACHE_DIR / "tmdb"
+        self.api_key = normalize_space(api_key if api_key is not None else os.environ.get("TMDB_API_KEY", ""))
+        self.read_access_token = normalize_space(
+            read_access_token if read_access_token is not None else os.environ.get("TMDB_READ_ACCESS_TOKEN", "")
+        )
+        self.cache_ttl = max(0, cache_ttl)
+        self.timeout = max(1.0, timeout)
+        self.image_base_url = image_base_url.rstrip("/")
+        self.enabled = bool(self.api_key or self.read_access_token)
+        self.cache_hits = 0
+        self.network_requests = 0
+        self._stats_lock = threading.Lock()
+
+    def _cache_path_for(self, title: str, year: str) -> Path:
+        digest = hashlib.sha256(f"{normalize_key(title)}:{year}".encode("utf-8")).hexdigest()
+        return self.cache_dir / f"tmdb-{digest}.json"
+
+    def _cached_result(self, cache_path: Path, force: bool) -> tuple[bool, dict | None]:
+        if force or self.cache_ttl <= 0:
+            return False, None
+        try:
+            if not cache_path.is_file() or time.time() - cache_path.stat().st_mtime > self.cache_ttl:
+                return False, None
+        except OSError:
+            return False, None
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False, None
+        if not isinstance(payload, dict) or "result" not in payload:
+            return False, None
+        result = payload.get("result")
+        if result is not None and not isinstance(result, dict):
+            return False, None
+        with self._stats_lock:
+            self.cache_hits += 1
+        return True, result
+
+    def _store_result(self, cache_path: Path, result: dict | None) -> None:
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        temporary = cache_path.with_name(f".{cache_path.name}.tmp")
+        temporary.write_text(json.dumps({"result": result}, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(cache_path)
+
+    def lookup(self, title: str, year: str, force: bool = False) -> dict | None:
+        if not self.enabled or not TMDB_RELEASE_YEAR_RE.fullmatch(year):
+            return None
+        cache_path = self._cache_path_for(title, year)
+        cached, cached_result = self._cached_result(cache_path, force)
+        if cached:
+            return cached_result
+
+        params = {
+            "query": title,
+            "year": year,
+            "include_adult": "false",
+            "language": "en-US",
+        }
+        # A v4 read token is preferred when both credential types are present;
+        # otherwise support the conventional v3 API key without exposing it to
+        # the browser or catalog payload.
+        headers = {
+            "User-Agent": "Rerun/0.5 (poster fallback)",
+            "Accept": "application/json",
+        }
+        if self.read_access_token:
+            headers["Authorization"] = f"Bearer {self.read_access_token}"
+        else:
+            params["api_key"] = self.api_key
+        request = Request(f"{TMDB_SEARCH_MOVIE_URL}?{urlencode(params)}", headers=headers)
+        with self._stats_lock:
+            self.network_requests += 1
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                payload = json.loads(response.read(1_000_000).decode("utf-8", errors="replace"))
+        except HTTPError as error:
+            # Do not include a request URL here: v3 keys live in its query
+            # string and source diagnostics are public through the site API.
+            raise RuntimeError(f"TMDB API HTTP {error.code}") from None
+        except (URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+            raise RuntimeError("TMDB API request failed") from None
+        if not isinstance(payload, dict):
+            raise RuntimeError("TMDB API returned an invalid response")
+        result = select_tmdb_movie_match(payload.get("results"), title, year, self.image_base_url)
+        try:
+            self._store_result(cache_path, result)
+        except OSError:
+            # Cache persistence is an optimization; an unwritable disk must
+            # never make an otherwise valid live catalog fail.
+            pass
+        return result
+
+
+def enrich_missing_tmdb_artwork(
+    events: Iterable[dict],
+    *,
+    client: TmdbArtworkClient | None = None,
+    force: bool = False,
+    max_lookups: int = TMDB_MAX_LOOKUPS,
+) -> tuple[list[dict], dict]:
+    """Fill empty artwork fields from exact TMDB movie matches, if configured."""
+
+    enriched = [dict(event) for event in events]
+    client = client or TmdbArtworkClient()
+    summary = {
+        "enabled": bool(getattr(client, "enabled", False)),
+        "attempted": 0,
+        "matched": 0,
+        "skipped": 0,
+        "cacheHits": 0,
+        "networkRequests": 0,
+        "errors": [],
+    }
+    if not summary["enabled"]:
+        return enriched, summary
+
+    results: dict[tuple[str, str], dict | None] = {}
+    allowed_lookups = max(0, max_lookups)
+    for event in enriched:
+        if normalize_space(event.get("image", "")):
+            continue
+        lookup_key = tmdb_event_lookup_key(event)
+        if not lookup_key:
+            summary["skipped"] += 1
+            continue
+        title = normalize_space(event.get("title", ""))
+        year = lookup_key[1]
+        if lookup_key not in results:
+            if summary["attempted"] >= allowed_lookups:
+                summary["skipped"] += 1
+                continue
+            summary["attempted"] += 1
+            try:
+                results[lookup_key] = client.lookup(title, year, force=force)
+            except RuntimeError as error:
+                results[lookup_key] = None
+                if len(summary["errors"]) < 5:
+                    summary["errors"].append(str(error))
+        match = results.get(lookup_key)
+        if not match:
+            continue
+        event["image"] = match["posterUrl"]
+        event["imageAlt"] = f"Poster art for {title} via TMDB"
+        event["imageCredit"] = "Poster supplied by TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB."
+        event["imageSource"] = match["tmdbUrl"]
+        summary["matched"] += 1
+
+    summary["cacheHits"] = int(getattr(client, "cache_hits", 0))
+    summary["networkRequests"] = int(getattr(client, "network_requests", 0))
+    return enriched, summary
+
+
 def parallel_fetch(fetcher: CachedFetcher, urls: Iterable[str], force: bool = False, max_workers: int = 8) -> dict[str, tuple[str, str, bool] | Exception]:
     """Fetch independent detail pages concurrently while retaining one cache.
 
@@ -1624,6 +1845,21 @@ def ac_event_title_from_url(page_url: str) -> str:
     slug = urlsplit(page_url).path.rstrip("/").rsplit("/", 1)[-1]
     slug = AC_EVENT_URL_DATE_RE.sub("", slug)
     return normalize_space(slug.replace("-", " ").replace("_", " ")).title()
+
+
+def ac_card_title_matches_event_url(card_title: object, page_url: str) -> bool:
+    """Allow a card title to win when AC adds a program suffix to its URL.
+
+    Festival pages often use URLs such as ``she-keeps-me-young-bf-09-25-2026``
+    while the visible official card correctly says ``SHE KEEPS ME YOUNG``. The
+    suffix identifies the program, not a different film, so it must not create
+    a second screening identity. A genuinely mismatched URL still wins below
+    to repair shifted card/link associations.
+    """
+
+    card_key = slugify(card_title)
+    url_key = slugify(ac_event_title_from_url(page_url))
+    return bool(card_key and url_key and (card_key == url_key or url_key.startswith(f"{card_key}-")))
 
 
 def parse_new_bev_date(text: str, default_year: int) -> tuple[int, int, int] | None:
@@ -1928,7 +2164,7 @@ def parse_american_cinematheque_series(html: str, page_url: str, now: datetime |
             unused_event_urls.remove(page)
         title = local_titles[0] if local_titles else ""
         url_title = ac_event_title_from_url(page) if page != page_url else ""
-        if url_title and (not title or (matching_urls and slugify(title) != slugify(url_title))):
+        if url_title and (not title or (matching_urls and not ac_card_title_matches_event_url(title, page))):
             title = url_title
         if not title:
             continue
@@ -4231,8 +4467,9 @@ def scrape_los_angeles_sequential(now: datetime | None = None, fetcher: CachedFe
         )
         deduped[key] = event
     normalized_events = sorted(deduped.values(), key=lambda item: item.get("startAt", ""))
+    enriched_events, artwork = enrich_missing_tmdb_artwork(normalized_events, force=force)
     return {
-        "screenings": normalized_events,
+        "screenings": enriched_events,
         "sources": sources,
         "errors": errors,
         "checkedAt": iso_utc(),
@@ -4240,6 +4477,7 @@ def scrape_los_angeles_sequential(now: datetime | None = None, fetcher: CachedFe
         "successfulSources": sum(1 for source in sources if source.get("status") == "verified"),
         "networkRequests": getattr(fetcher, "network_requests", 0),
         "cacheHits": getattr(fetcher, "cache_hits", 0),
+        "artwork": artwork,
     }
 
 
@@ -5632,8 +5870,9 @@ def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | Non
         errors.extend(result.get("errors", []))
 
     normalized_events = deduplicate_events(all_events)
+    enriched_events, artwork = enrich_missing_tmdb_artwork(normalized_events, force=force)
     return {
-        "screenings": normalized_events,
+        "screenings": enriched_events,
         "sources": sources,
         "errors": errors[:15],
         "checkedAt": iso_utc(),
@@ -5657,6 +5896,7 @@ def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | Non
         ][:15],
         "networkRequests": getattr(fetcher, "network_requests", 0),
         "cacheHits": getattr(fetcher, "cache_hits", 0),
+        "artwork": artwork,
     }
 
 

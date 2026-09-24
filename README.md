@@ -206,6 +206,20 @@ On Render, attach a persistent disk, mount it at `/var/data`, and set:
 RERUN_DATA_DIR=/var/data
 ```
 
+To fill only cards that have no venue-provided artwork, add one TMDB secret in
+Render (never commit it or put it in browser code):
+
+```text
+TMDB_API_KEY=...                 # conventional v3 API key
+# or
+TMDB_READ_ACCESS_TOKEN=...       # v4 read-access token
+```
+
+`RERUN_TMDB_MAX_LOOKUPS` defaults to 40 per refresh and
+`RERUN_TMDB_CACHE_TTL_SECONDS` defaults to 30 days. TMDB lookups are exact
+title-and-release-year matches only; a missing key simply leaves the existing
+venue-artwork behavior unchanged.
+
 Then configure Render's HTTP health check path as `/api/health`. After the next
 successful crawl, confirm the health payload reports
 `storage.persistentStorageConfigured: true`, a populated `lastVerifiedAt`, and
@@ -249,6 +263,15 @@ Screening artwork is captured from each venue's official program page when
 available. Each listing keeps its source URL so the image and showtime can be
 verified before publishing or using it in a commercial context.
 
+When `TMDB_API_KEY` or `TMDB_READ_ACCESS_TOKEN` is configured, Rerun uses the
+TMDB movie search API only for cards with no official venue image. It requires
+an exact normalized title and a single matching release year, skips multi-film
+bills and ambiguous/yearless listings, and caches positive and negative
+results on the persistent disk. TMDB poster URLs are proxied through Rerun's
+approved-image route; credentials never reach the browser. The About section
+includes TMDB's required non-endorsement notice. Review TMDB's approved-logo,
+attribution, image-rights, and commercial-licensing terms before launch.
+
 ## Product behavior
 
 - Official-source Los Angeles browse feed with verified-snapshot outage fallback
@@ -273,8 +296,8 @@ verified before publishing or using it in a commercial context.
 3. Deploy, wait for one successful worker crawl, then inspect `/api/health`.
 4. Confirm `lastVerifiedAt`, `feed.complete`, and each required source before
    announcing the guide.
-5. Review venue terms, ticket links, privacy copy, and image rights before
-   commercial launch.
+5. If TMDB fallback art is enabled, verify its attribution and licensing
+   requirements alongside venue image rights before commercial launch.
 
 Useful Render references: [persistent disks](https://render.com/docs/disks),
 [health checks](https://render.com/docs/health-checks), and

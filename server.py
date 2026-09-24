@@ -96,6 +96,7 @@ IMAGE_ALLOWED_HOSTS = {
     "wearebraindead.com",
     "www.wearebraindead.com",
     "studios.wearebraindead.com",
+    "image.tmdb.org",
 }
 
 

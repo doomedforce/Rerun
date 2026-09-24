@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("RERUN_DATA_DIR") or ROOT / "data").expanduser().resolve()
 REFRESH_TTL_SECONDS = int(os.environ.get("RERUN_REFRESH_TTL_SECONDS", "1800"))
 RETRY_BACKOFF_SECONDS = int(os.environ.get("RERUN_REFRESH_RETRY_SECONDS", "600"))
-FEED_POLICY_VERSION = 24
+FEED_POLICY_VERSION = 26
 LOCK_PATH = DATA_DIR / ".refresh.lock"
 
 
@@ -270,6 +270,9 @@ def _refresh_los_angeles(now: datetime | None = None, force: bool = False) -> di
         "networkRequests": result.get("networkRequests", 0),
         "cacheHits": result.get("cacheHits", 0),
     }
+    artwork = result.get("artwork")
+    if isinstance(artwork, dict):
+        meta["artwork"] = artwork
     if partial_source_ids:
         meta["partialRefreshSourceIds"] = partial_source_ids
     if verified:

@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from datetime import datetime, timedelta
@@ -58,6 +59,20 @@ AC_TWO_LANE_HTML = """
 <p>TUE SEP 8, 2026 7:30 PM</p><p>Aero Theatre | 55th Anniversary</p>
 <p>RELEASED IN: 1971</p><p>DIRECTED BY: Monte Hellman</p><p>FORMAT: DCP</p>
 <h3>Locations</h3><h4>Aero Theatre</h4><p>1328 Montana Ave</p></html>
+"""
+
+AC_SHE_KEEPS_ME_YOUNG_HTML = """
+<html><h1>SHE KEEPS ME YOUNG</h1><p>FRI SEP 25, 2026 9:30 PM</p>
+<p>MUBI Theatre at Aero Theatre | Beyond Fest 2026</p><p>RELEASED IN: 2026</p>
+<p>DIRECTED BY: Doron Max Hagay</p><p>FORMAT: DCP</p>
+<h3>Locations</h3><h4>Aero Theatre</h4><p>1328 Montana Ave</p></html>
+"""
+
+AC_BF_SERIES_HTML = """
+<html><h1>Beyond Fest 2026</h1>
+<p>FRI SEP 25, 2026</p><p>9:30 PM</p><h3>SHE KEEPS ME YOUNG</h3>
+<p>MUBI Theatre at Aero Theatre | Beyond Fest 2026</p>
+<a href="/now-showing/she-keeps-me-young-bf-09-25-2026/">View Details</a></html>
 """
 
 AC_SERIES_HTML = """
@@ -455,6 +470,21 @@ class FakeFetcher:
         if url not in self.pages:
             raise RuntimeError(f"missing fixture: {url}")
         return self.pages[url], "2026-09-07T19:00:00Z", False
+
+
+class FakeTmdbClient:
+    enabled = True
+    cache_hits = 0
+    network_requests = 0
+
+    def __init__(self, matches):
+        self.matches = matches
+        self.lookups = []
+
+    def lookup(self, title, year, force=False):
+        self.lookups.append((title, year, force))
+        self.network_requests += 1
+        return self.matches.get((scraper.normalize_key(title), year))
 
 
 class ScraperTests(unittest.TestCase):
@@ -967,6 +997,67 @@ class ScraperTests(unittest.TestCase):
         )
         self.assertEqual(parser.images, ["/poster-large.jpg", "/poster-lazy.jpg"])
 
+    def test_tmdb_lookup_uses_an_exact_year_match_and_caches_it(self):
+        class Response:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, limit):
+                return json.dumps({"results": [
+                    {"id": 111, "title": "Sleeping Dogs", "release_date": "2024-01-01", "poster_path": "/wrong.jpg"},
+                    {"id": 222, "title": "Sleeping Dogs", "release_date": "1977-09-29", "poster_path": "/right.jpg"},
+                ]}).encode("utf-8")
+
+        with TemporaryDirectory() as cache_dir:
+            client = scraper.TmdbArtworkClient(cache_dir=Path(cache_dir), api_key="test-v3-key")
+            with patch.object(scraper, "urlopen", return_value=Response()) as mocked_urlopen:
+                first = client.lookup("SLEEPING DOGS", "1977")
+                second = client.lookup("SLEEPING DOGS", "1977")
+
+        self.assertEqual(first, second)
+        self.assertEqual(first["posterUrl"], "https://image.tmdb.org/t/p/w500/right.jpg")
+        self.assertEqual(first["tmdbUrl"], "https://www.themoviedb.org/movie/222")
+        self.assertEqual(mocked_urlopen.call_count, 1)
+        request = mocked_urlopen.call_args.args[0]
+        self.assertIn("query=SLEEPING+DOGS", request.full_url)
+        self.assertIn("year=1977", request.full_url)
+        self.assertIn("api_key=test-v3-key", request.full_url)
+        self.assertEqual(client.cache_hits, 1)
+
+    def test_tmdb_fallback_preserves_official_art_and_skips_multi_film_bills(self):
+        match = {
+            "movieId": "222",
+            "posterUrl": "https://image.tmdb.org/t/p/w500/right.jpg",
+            "tmdbUrl": "https://www.themoviedb.org/movie/222",
+        }
+        client = FakeTmdbClient({("sleeping dogs", "1977"): match})
+        events = [
+            {"title": "SLEEPING DOGS", "year": "1977", "image": "", "sourceUrl": "https://venue.example/sleeping"},
+            {"title": "SLEEPING DOGS", "year": "1977", "image": "", "sourceUrl": "https://venue.example/sleeping-late"},
+            {"title": "SILENT MOVIE", "year": "1976", "image": "https://venue.example/official.jpg"},
+            {"title": "MIRAGE / STRAIT-JACKET", "year": "1965", "image": ""},
+            {"title": "Untitled Movie", "year": "—", "image": ""},
+        ]
+
+        enriched, summary = scraper.enrich_missing_tmdb_artwork(events, client=client, max_lookups=5)
+
+        self.assertEqual(client.lookups, [("SLEEPING DOGS", "1977", False)])
+        self.assertEqual(enriched[0]["image"], match["posterUrl"])
+        self.assertEqual(enriched[1]["image"], match["posterUrl"])
+        self.assertEqual(enriched[0]["imageSource"], match["tmdbUrl"])
+        self.assertIn("not endorsed or certified by TMDB", enriched[0]["imageCredit"])
+        self.assertEqual(enriched[2]["image"], "https://venue.example/official.jpg")
+        self.assertEqual(enriched[3]["image"], "")
+        self.assertEqual(enriched[4]["image"], "")
+        self.assertEqual(summary["attempted"], 1)
+        self.assertEqual(summary["matched"], 2)
+        self.assertEqual(summary["skipped"], 2)
+
     def test_pacific_fallback_has_correct_daylight_offsets(self):
         fallback = scraper.PacificTimeZone()
         winter = datetime(2026, 1, 15, 12, tzinfo=fallback)
@@ -1114,6 +1205,25 @@ class ScraperTests(unittest.TestCase):
                 "https://www.americancinematheque.com/now-showing/double-indemnity-10-17-2026/",
             ],
         )
+
+    def test_american_cinematheque_series_does_not_turn_program_url_suffixes_into_duplicate_titles(self):
+        series_url = "https://www.americancinematheque.com/series/beyond-fest-2026/"
+        event_url = "https://www.americancinematheque.com/now-showing/she-keeps-me-young-bf-09-25-2026/"
+        entries = scraper.parse_american_cinematheque_series(AC_BF_SERIES_HTML, series_url, NOW)
+        self.assertEqual([(entry["title"], entry["pageUrl"]) for entry in entries], [("SHE KEEPS ME YOUNG", event_url)])
+
+        pages = {
+            scraper.AC_NOW_SHOWING_URL: '<a href="/series/beyond-fest-2026/">Beyond Fest</a>',
+            series_url: AC_BF_SERIES_HTML,
+            event_url: AC_SHE_KEEPS_ME_YOUNG_HTML,
+        }
+        with patch.object(scraper, "AC_SEED_URLS", []):
+            result = scraper._scrape_american_cinematheque(NOW, FakeFetcher(pages), force=True)
+
+        matching = [event for event in result["events"] if event["title"] == "SHE KEEPS ME YOUNG"]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["time"], "9:30 PM")
+        self.assertEqual(matching[0]["venue"], "Aero Theatre")
 
     def test_american_cinematheque_series_card_survives_detail_failure(self):
         series_url = "https://www.americancinematheque.com/series/program/"

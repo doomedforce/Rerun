@@ -16,6 +16,10 @@ import alerts
 
 
 class ServerTests(unittest.TestCase):
+    def test_tmdb_image_host_is_approved_for_the_artwork_proxy(self):
+        self.assertTrue(server.image_host_allowed("image.tmdb.org"))
+        self.assertFalse(server.image_host_allowed("image.tmdb.org.example.test"))
+
     def test_optional_source_failure_does_not_block_verified_required_feed(self):
         sources = [
             {"name": "American Cinematheque", "status": "verified", "required": True},
@@ -72,6 +76,7 @@ class ServerTests(unittest.TestCase):
             "blockingErrors": [],
             "optionalErrors": [],
             "checkedAt": "2026-09-09T00:00:00Z",
+            "artwork": {"enabled": True, "attempted": 1, "matched": 1},
         }
         with tempfile.TemporaryDirectory() as directory:
             data_dir = Path(directory)
@@ -82,6 +87,7 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(snapshot["screenings"], [event])
             self.assertEqual(snapshot["meta"]["status"], "ok")
             self.assertEqual(snapshot["meta"]["lastVerifiedAt"], "2026-09-09T00:00:00Z")
+            self.assertEqual(snapshot["meta"]["artwork"]["matched"], 1)
             self.assertTrue((data_dir / "last-verified-snapshot.json").exists())
 
     def test_last_verified_snapshot_serves_during_required_source_outage(self):
