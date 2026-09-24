@@ -111,6 +111,14 @@ USER_AGENT = os.environ.get(
 DEFAULT_CACHE_TTL = int(os.environ.get("RERUN_CACHE_TTL_SECONDS", "1800"))
 DEFAULT_TIMEOUT = float(os.environ.get("RERUN_HTTP_TIMEOUT", "4"))
 VEEZI_TIMEOUT = float(os.environ.get("RERUN_VEEZI_TIMEOUT", "30"))
+SLOW_SOURCE_TIMEOUT = float(os.environ.get("RERUN_SLOW_SOURCE_HTTP_TIMEOUT", "12"))
+SLOW_SOURCE_HOSTS = frozenset({
+    "academymuseum.org",
+    "www.academymuseum.org",
+    "v2.academymuseum.org",
+    "cinema.ucla.edu",
+    "www.cinema.ucla.edu",
+})
 DEFAULT_MAX_AC_EVENTS = int(os.environ.get("RERUN_MAX_AC_EVENTS", "500"))
 DEFAULT_MAX_DETAIL_EVENTS = int(os.environ.get("RERUN_MAX_DETAIL_EVENTS", "60"))
 DEFAULT_REQUEST_GAP = float(os.environ.get("RERUN_REQUEST_GAP_SECONDS", "0.08"))
@@ -121,6 +129,20 @@ TRANSIENT_HTTP_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 AC_NOW_SHOWING_URL = "https://www.americancinematheque.com/now-showing/"
 AC_HOME_URL = "https://www.americancinematheque.com/"
+EGYPTIAN_HOME_URL = "https://www.egyptiantheatre.com/"
+EGYPTIAN_SERIES_URL = "https://www.egyptiantheatre.com/series-and-events"
+EGYPTIAN_SPECIAL_ENGAGEMENTS_URL = "https://www.egyptiantheatre.com/special-engagements"
+EGYPTIAN_CURRENT_SERIES_SEED_URLS = (
+    # The public Egyptian landing pages can be client-rendered. This current
+    # official series page is retained as a bounded discovery bridge while
+    # the home page and sitemap locate future program cycles.
+    "https://www.egyptiantheatre.com/series/ac-beyond-fest-2026",
+)
+EGYPTIAN_SITEMAP_URLS = (
+    "https://www.egyptiantheatre.com/sitemap.xml",
+    "https://www.egyptiantheatre.com/sitemap_index.xml",
+    "https://www.egyptiantheatre.com/sitemap-index.xml",
+)
 NEW_BEV_SCHEDULE_URL = "https://thenewbev.com/schedule/"
 NEW_BEV_SESSIONS_URL = "https://ticketing.uswest.veezi.com/sessions/?siteToken=fmtswb0qqbym3de6c4bbsqj89m"
 VISTA_HOME_URL = "https://www.vistatheaterhollywood.com/"
@@ -140,6 +162,10 @@ ACADEMY_SERIES_SEED_URLS = (
     # Films directory only expose their cards after JavaScript runs.
     "https://www.academymuseum.org/programs/series/special-screenings",
     "https://www.academymuseum.org/en/programs/series/family-matinees",
+    # Ongoing/current series provide a stable first-party bridge while the
+    # client-rendered Films directory and sitemap locate future program cycles.
+    "https://www.academymuseum.org/programs/series/branch-selects",
+    "https://www.academymuseum.org/programs/series/marilyn-monroe-hollywood-icon-sep-nov-2026",
 )
 ACADEMY_SITEMAP_URLS = (
     "https://www.academymuseum.org/sitemap.xml",
@@ -212,6 +238,13 @@ SOURCE_REGISTRY = {
         "adapter": "academy_museum",
         "required": False,
     },
+    "egyptian-theatre": {
+        "name": "Egyptian Theatre",
+        "city": "los-angeles",
+        "url": EGYPTIAN_HOME_URL,
+        "adapter": "egyptian_theatre",
+        "required": False,
+    },
     "fine-arts-theatre": {
         "name": "Fine Arts Theatre Beverly Hills",
         "city": "los-angeles",
@@ -279,6 +312,16 @@ VENUE_CATALOG = {
         "name": "Egyptian Theatre",
         "neighborhood": "Hollywood",
         "address": "6712 Hollywood Blvd, Los Angeles, CA 90028",
+    },
+    "directors village": {
+        "name": "Directors Village",
+        "neighborhood": "Westwood",
+        "address": "961 Broxton Avenue, Los Angeles, CA 90024",
+    },
+    "director's village": {
+        "name": "Directors Village",
+        "neighborhood": "Westwood",
+        "address": "961 Broxton Avenue, Los Angeles, CA 90024",
     },
     "new beverly": {
         "name": "New Beverly Cinema",
@@ -981,8 +1024,13 @@ def academy_date_only_candidates(
 
 def academy_labelled_screening(html: str) -> bool:
     parser = parse_html(html)
-    labels = {normalize_key(line).rstrip(":") for line in primary_event_lines(parser.lines)}
-    return "screenings" in labels or "screening from series" in labels
+    # Academy's rendered markup can put the series link in the same text node
+    # as the type label, yielding e.g. ``Screening from SeriesFamily
+    # Matinees`` in the flat parser. The meaningful label is still the leading
+    # word, so accept a bounded Screening/Screenings prefix near the start of
+    # the event content instead of requiring an exact standalone line.
+    labels = [normalize_key(line).rstrip(":") for line in primary_event_lines(parser.lines)[:12]]
+    return any(re.match(r"^screenings?(?:\s|$)", label) for label in labels)
 
 
 def discover_academy_event_urls(html: str, base_url: str = ACADEMY_CALENDAR_URL) -> list[str]:
@@ -1056,16 +1104,29 @@ def discover_academy_traversal_urls(html: str, base_url: str = ACADEMY_CALENDAR_
 
 def discover_academy_series_urls(html: str, base_url: str = ACADEMY_FILMS_URL) -> list[str]:
     parser = parse_html(html)
+    candidates = [urljoin(base_url, link.get("href", "")) for link in parser.links]
+    candidates.extend(
+        unescape(match.group(1)).strip()
+        for match in re.finditer(r"<loc[^>]*>(.*?)</loc>", html, re.I | re.S)
+    )
+    candidates.extend(
+        urljoin(base_url, match.group(0))
+        for match in re.finditer(
+            r"(?:https?://[^\"'<> ]+)?/(?:en/)?programs/series/[A-Za-z0-9%._~:/?#\[\]@!$&'()*+,;=-]+",
+            html.replace("\\/", "/"),
+        )
+    )
     urls: list[str] = []
-    for link in parser.links:
-        candidate = urljoin(base_url, link.get("href", "")).split("#", 1)[0]
+    for candidate in candidates:
+        candidate = urljoin(base_url, candidate).split("#", 1)[0]
         parsed = urlsplit(candidate)
         if parsed.scheme != "https" or parsed.netloc.lower() not in ACADEMY_HOSTS:
             continue
         if not parsed.path.rstrip("/").startswith(("/programs/series/", "/en/programs/series/")):
             continue
-        if candidate not in urls:
-            urls.append(candidate)
+        normalized = urlunsplit(("https", parsed.netloc.lower(), parsed.path.rstrip("/") + "/", "", ""))
+        if normalized not in urls:
+            urls.append(normalized)
     return urls
 
 
@@ -1262,6 +1323,12 @@ class CachedFetcher:
                 request_timeout = self.timeout
                 if host.endswith(".veezi.com") or host == "veezi.com":
                     request_timeout = max(request_timeout, VEEZI_TIMEOUT)
+                elif host in SLOW_SOURCE_HOSTS:
+                    # Academy and UCLA can serve a first-party JavaScript
+                    # shell or a larger server-rendered program page. Give
+                    # only those sources a little more headroom without
+                    # slowing every venue crawl.
+                    request_timeout = max(request_timeout, SLOW_SOURCE_TIMEOUT)
                 with urlopen(request, timeout=request_timeout) as response:
                     raw = response.read(8_000_000)
                     if response.headers.get("Content-Encoding", "").lower() == "gzip":
@@ -1450,8 +1517,25 @@ def event_quality(event: dict) -> tuple[int, int]:
     return verified, metadata
 
 
+def has_explicit_showtime(event: dict) -> bool:
+    """Return true only for a concrete UI clock, never a date-only placeholder."""
+
+    return bool(re.fullmatch(r"\d{1,2}:\d{2}\s*(?:AM|PM)", normalize_space(event.get("time", "")), re.I))
+
+
+def screening_day_identity(event: dict) -> tuple[str, str, str, str]:
+    """Identity for a date-only fallback against a separately timed listing."""
+
+    return (
+        normalize_key(event.get("city", "")),
+        screening_title_key(event.get("venue", "")),
+        screening_title_key(event.get("title", "")),
+        normalize_space(event.get("startAt", ""))[:10],
+    )
+
+
 def deduplicate_events(events: Iterable[dict]) -> list[dict]:
-    """Keep one best record for each venue/title/start tuple."""
+    """Keep exact listings plus one best date-only fallback per screening day."""
 
     unique: dict[tuple[str, str, str, str], dict] = {}
     for event in events:
@@ -1459,9 +1543,42 @@ def deduplicate_events(events: Iterable[dict]) -> list[dict]:
             continue
         key = screening_identity(event)
         current = unique.get(key)
-        if current is None or event_quality(event) > event_quality(current):
+        if current is None or (
+            has_explicit_showtime(event) and not has_explicit_showtime(current)
+        ) or (
+            has_explicit_showtime(event) == has_explicit_showtime(current)
+            and event_quality(event) > event_quality(current)
+        ):
             unique[key] = event
-    return sorted(unique.values(), key=lambda item: item.get("startAt", ""))
+
+    # Egyptian and Academy pages can legitimately publish a date before a
+    # clock time. If another official source already has that same venue/title
+    # on the same day with a concrete time, retain the timed record only. This
+    # prevents an added official source from producing a misleading duplicate
+    # while preserving distinct real showtimes on the same day.
+    kept: list[dict] = []
+    day_representative: dict[tuple[str, str, str, str], int] = {}
+    for event in sorted(unique.values(), key=lambda item: item.get("startAt", "")):
+        day_key = screening_day_identity(event)
+        existing_index = day_representative.get(day_key)
+        if existing_index is None:
+            day_representative[day_key] = len(kept)
+            kept.append(event)
+            continue
+        existing = kept[existing_index]
+        explicit = has_explicit_showtime(event)
+        existing_explicit = has_explicit_showtime(existing)
+        if explicit and not existing_explicit:
+            kept[existing_index] = event
+        elif not explicit and existing_explicit:
+            continue
+        elif not explicit and not existing_explicit and event_quality(event) > event_quality(existing):
+            kept[existing_index] = event
+        elif explicit and existing_explicit:
+            # Both listings have a time and survived exact de-duplication, so
+            # they are distinct official showtimes and must remain separate.
+            kept.append(event)
+    return sorted(kept, key=lambda item: item.get("startAt", ""))
 
 
 def ac_event_url_date(page_url: str) -> tuple[int, int, int] | None:
@@ -1641,6 +1758,7 @@ def make_event(
         "ticketStatus": ticket_status,
         "sourceUrl": page_url,
         "sourcePageUrl": source_page_url or page_url,
+        "sourceId": source_id,
         "sourceName": source_name,
         "sourceLastChecked": iso_utc(),
         "sourceStatus": detail_status,
@@ -1804,6 +1922,252 @@ def parse_american_cinematheque_series(html: str, page_url: str, now: datetime |
             }
         )
     return entries
+
+
+EGYPTIAN_HOSTS = {"egyptiantheatre.com", "www.egyptiantheatre.com"}
+EGYPTIAN_DATE_RE = re.compile(
+    rf"\b(?:(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|{DAY_NAMES})\.?[,]?\s+)?"
+    rf"(?P<month>{MONTH_PATTERN_SHORT})\.?\s+(?P<day>\d{{1,2}})(?:st|nd|rd|th)?(?:[,]?\s*(?P<year>20\d{{2}}))?\b",
+    re.I,
+)
+EGYPTIAN_SERIES_YEAR_RE = re.compile(r"-(20\d{2})/?$", re.I)
+
+
+def _egyptian_normalize_url(value: str, base_url: str) -> str:
+    parsed = urlsplit(urljoin(base_url, unescape(value).strip()).split("#", 1)[0])
+    if parsed.scheme != "https" or parsed.netloc.lower() not in EGYPTIAN_HOSTS:
+        return ""
+    return urlunsplit(("https", "www.egyptiantheatre.com", parsed.path, parsed.query, ""))
+
+
+def discover_egyptian_sitemap_urls(html: str, base_url: str) -> list[str]:
+    """Return child sitemap URLs published by the Egyptian Theatre site."""
+
+    urls: list[str] = []
+    for match in re.finditer(r"<loc[^>]*>(.*?)</loc>", html, re.I | re.S):
+        candidate = _egyptian_normalize_url(match.group(1), base_url)
+        if not candidate or candidate in urls:
+            continue
+        path = urlsplit(candidate).path.casefold()
+        if "sitemap" in path or path.endswith((".xml", ".xml.gz")):
+            urls.append(candidate)
+    return urls
+
+
+def discover_egyptian_screening_urls(html: str, base_url: str = EGYPTIAN_HOME_URL) -> list[str]:
+    """Find Egyptian Theatre film and screening-event pages from official HTML."""
+
+    parser = parse_html(html)
+    candidates = [urljoin(base_url, link.get("href", "")) for link in parser.links]
+    candidates.extend(
+        unescape(match.group(1)).strip()
+        for match in re.finditer(r"<loc[^>]*>(.*?)</loc>", html, re.I | re.S)
+    )
+    candidates.extend(
+        urljoin(base_url, match.group(0))
+        for match in re.finditer(
+            r"(?:https?://[^\"'<> ]+)?/(?:film|event)/[A-Za-z0-9%._~:/?#\[\]@!$&'()*+,;=-]+",
+            html.replace("\\/", "/"),
+            re.I,
+        )
+    )
+    urls: list[str] = []
+    for candidate in candidates:
+        normalized = _egyptian_normalize_url(candidate, base_url)
+        if not normalized:
+            continue
+        parsed = urlsplit(normalized)
+        path = parsed.path.rstrip("/")
+        if not path.casefold().startswith(("/film/", "/event/")):
+            continue
+        canonical = urlunsplit(("https", "www.egyptiantheatre.com", path + "/", "", ""))
+        if canonical not in urls:
+            urls.append(canonical)
+    return urls
+
+
+def discover_egyptian_series_urls(html: str, base_url: str = EGYPTIAN_SERIES_URL) -> list[str]:
+    """Find the Egyptian Theatre's active program/series pages."""
+
+    parser = parse_html(html)
+    candidates = [urljoin(base_url, link.get("href", "")) for link in parser.links]
+    candidates.extend(
+        unescape(match.group(1)).strip()
+        for match in re.finditer(r"<loc[^>]*>(.*?)</loc>", html, re.I | re.S)
+    )
+    candidates.extend(
+        urljoin(base_url, match.group(0))
+        for match in re.finditer(
+            r"(?:https?://[^\"'<> ]+)?/series/[A-Za-z0-9%._~:/?#\[\]@!$&'()*+,;=-]+",
+            html.replace("\\/", "/"),
+            re.I,
+        )
+    )
+    urls: list[str] = []
+    for candidate in candidates:
+        normalized = _egyptian_normalize_url(candidate, base_url)
+        if not normalized:
+            continue
+        parsed = urlsplit(normalized)
+        path = parsed.path.rstrip("/")
+        if path.casefold() == "/series" or not path.casefold().startswith("/series/"):
+            continue
+        canonical = urlunsplit(("https", "www.egyptiantheatre.com", path + "/", "", ""))
+        if canonical not in urls:
+            urls.append(canonical)
+    return urls
+
+
+def prioritize_egyptian_series_urls(urls: Iterable[str], now: datetime) -> list[str]:
+    """Prefer current/future Egyptian program pages over archival series."""
+
+    current_year = as_la(now).year
+    ranked: list[tuple[int, int, int, str]] = []
+    for index, page_url in enumerate(dict.fromkeys(urls)):
+        match = EGYPTIAN_SERIES_YEAR_RE.search(urlsplit(page_url).path)
+        year = int(match.group(1)) if match else None
+        if year is not None and year < current_year:
+            continue
+        rank = 0 if year == current_year else 1 if year is not None else 2
+        ranked.append((rank, year or 9999, index, page_url))
+    ranked.sort(key=lambda value: value[:3])
+    return [page_url for _, _, _, page_url in ranked]
+
+
+def egyptian_date_parts(value: object, current: datetime) -> tuple[int, int, int] | None:
+    """Parse Egyptian Theatre's displayed date, inferring only a nearby year."""
+
+    text = normalize_space(value)
+    if not text or "last shown" in normalize_key(text):
+        return None
+    match = EGYPTIAN_DATE_RE.search(text)
+    if not match:
+        return None
+    values = match.groupdict()
+    try:
+        month = MONTHS[values["month"].lower()[:3]]
+        day = int(values["day"])
+        year = int(values.get("year") or current.year)
+        candidate = datetime(year, month, day, tzinfo=LA_TZ)
+        # A new program page commonly omits the year.  If its month/day has
+        # already passed by a full season, it denotes the next calendar year;
+        # a date from the immediately preceding days remains past and is
+        # correctly filtered below.
+        if not values.get("year") and candidate.date() < current.date() and (current.date() - candidate.date()).days > 90:
+            year += 1
+        return year, month, day
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def egyptian_datetime_candidates(lines: Iterable[str], now: datetime) -> list[tuple[datetime, bool]]:
+    """Return future Egyptian dates, keeping an explicit time flag per date."""
+
+    current = as_la(now)
+    candidates: dict[str, tuple[datetime, bool]] = {}
+    visible_lines = [normalize_space(line) for line in lines if normalize_space(line)]
+    for index, line in enumerate(visible_lines):
+        date_parts = egyptian_date_parts(line, current)
+        if not date_parts:
+            continue
+        time_match = TIME_RE.search(line)
+        if not time_match:
+            # The site sometimes renders the clock in a sibling element. Keep
+            # the search local to this event header so an adjacent card cannot
+            # donate an unrelated showtime.
+            for nearby in [*visible_lines[max(0, index - 2):index], *visible_lines[index + 1:index + 4]]:
+                if TIME_RE.search(nearby):
+                    time_match = TIME_RE.search(nearby)
+                    break
+        year, month, day = date_parts
+        try:
+            if time_match:
+                hour, minute = parse_time(
+                    time_match.group("hour"),
+                    time_match.group("minute") or "0",
+                    time_match.group("meridiem"),
+                )
+                candidate = datetime(year, month, day, hour, minute, tzinfo=LA_TZ)
+                if candidate <= current:
+                    continue
+                key = candidate.isoformat()
+                candidates[key] = (candidate, True)
+            else:
+                candidate = datetime(year, month, day, 12, 0, tzinfo=LA_TZ)
+                if candidate.date() < current.date():
+                    continue
+                key = candidate.date().isoformat()
+                # An explicit time for the same date always outranks TBA.
+                existing = candidates.get(key)
+                if not existing or not existing[1]:
+                    candidates[key] = (candidate, False)
+        except ValueError:
+            continue
+    return sorted(candidates.values(), key=lambda value: value[0])
+
+
+def egyptian_screening_page(parser: PageParser, page_url: str) -> bool:
+    """Accept films, plus event pages that explicitly describe a screening."""
+
+    path = urlsplit(page_url).path.casefold().rstrip("/")
+    if path.startswith("/film/"):
+        return True
+    if not path.startswith("/event/"):
+        return False
+    text = normalize_key(" ".join(primary_event_lines(parser.lines)))
+    return any(marker in text for marker in ("screening", "film", "feature", "movie", "cinema"))
+
+
+def parse_egyptian_event(html: str, page_url: str, now: datetime | None = None) -> dict | None:
+    """Normalize one official Egyptian Theatre film/screening page."""
+
+    current = as_la(now)
+    parser = parse_html(html)
+    if not egyptian_screening_page(parser, page_url):
+        return None
+    event_lines = primary_event_lines(parser.lines)
+    if "last shown" in normalize_key(" ".join(event_lines[:8])):
+        return None
+    title = next(
+        (heading["text"] for heading in parser.headings if heading.get("tag") == "h1" and heading.get("text")),
+        normalize_space(parser.meta.get("og:title", "")).split("|", 1)[0],
+    )
+    if not title or not is_probable_screening_title(title):
+        return None
+    dates = egyptian_datetime_candidates(event_lines, current)
+    if not dates:
+        return None
+    start_at, has_time = dates[0]
+    time_label = None if has_time else "Time TBA"
+    notes = " · ".join(
+        dict.fromkeys(
+            line
+            for line in event_lines[:18]
+            if any(marker in normalize_key(line) for marker in ("q&a", "in conversation", "introduction", "premiere", "live performance"))
+        )
+    )[:220]
+    if time_label:
+        notes = " · ".join(filter(None, (notes, "Official time not posted")))[:220]
+    return make_event(
+        source_id="egyptian-theatre",
+        source_name="Egyptian Theatre",
+        title=title,
+        start_at=start_at,
+        now=current,
+        page_url=page_url,
+        ticket_url=page_url if time_label else pick_ticket_url(parser, page_url),
+        venue="Egyptian Theatre",
+        director=first_label_value(event_lines, ("DIRECTOR", "DIRECTED BY")),
+        year=first_label_value(event_lines, ("YEAR", "RELEASED IN")),
+        format_name=first_label_value(event_lines, ("FORMAT",)),
+        synopsis=synopsis_from_lines(event_lines, ("SYNOPSIS", "ABOUT THE FILM", "ABOUT THE FILMS")),
+        notes=notes,
+        image=(absolute_images(parser, page_url) or [""])[0],
+        source_page_url=EGYPTIAN_HOME_URL,
+        detail_status="verified-egyptian-theatre-date-only" if time_label else "verified-egyptian-theatre",
+        time_label=time_label,
+        ticket_status="details" if time_label else "",
+    )
 
 
 def parse_new_beverly_schedule(html: str, page_url: str = NEW_BEV_SCHEDULE_URL, now: datetime | None = None) -> list[dict]:
@@ -3535,6 +3899,7 @@ def _scrape_american_cinematheque(current: datetime, fetcher: CachedFetcher, for
     for entry in series_entries:
         series_by_key[(normalize_key(entry["title"]), entry["venue"], entry["startAt"].isoformat())] = entry
     series_by_page = {entry.get("pageUrl"): entry for entry in series_entries if entry.get("pageUrl")}
+    canonical_venue_names = {normalize_key(info["name"]) for info in VENUE_CATALOG.values()}
     for event in events:
         key = (
             normalize_key(event.get("title", "")),
@@ -3545,15 +3910,26 @@ def _scrape_american_cinematheque(current: datetime, fetcher: CachedFetcher, for
         if not series_entry:
             continue
         venue_data = venue_info(series_entry["venue"], "American Cinematheque")
-        event.update(
-            {
-                "venue": venue_data["name"],
-                "neighborhood": venue_data["neighborhood"],
-                "address": venue_data["address"],
-                "distance": venue_data["neighborhood"],
-                "sourcePageUrl": series_entry["sourcePageUrl"],
-            }
-        )
+        detail_venue = normalize_key(event.get("venue", ""))
+        series_venue = normalize_key(venue_data["name"])
+        # A detail page's explicit Locations block is the stronger authority
+        # for venue attribution. This protects Director's Village (and future
+        # partner sites) if a broad series card carries an old or generic
+        # theatre label.
+        if detail_venue not in canonical_venue_names or detail_venue == normalize_key("American Cinematheque"):
+            event.update(
+                {
+                    "venue": venue_data["name"],
+                    "neighborhood": venue_data["neighborhood"],
+                    "address": venue_data["address"],
+                    "distance": venue_data["neighborhood"],
+                }
+            )
+        elif detail_venue != series_venue:
+            warnings.append(
+                f"{event.get('sourceUrl')}: detail venue {event.get('venue')} retained over series venue {venue_data['name']}"
+            )
+        event["sourcePageUrl"] = series_entry["sourcePageUrl"]
     event_keys = {
         (normalize_key(event.get("title", "")), event.get("venue", ""), event.get("startAt", ""))
         for event in events
@@ -3646,37 +4022,57 @@ def _scrape_academy_museum(current: datetime, fetcher: CachedFetcher, force: boo
     except Exception as error:
         warnings.append(f"{ACADEMY_FILMS_URL}: {error}")
 
-    series_urls = list(dict.fromkeys(series_urls))[:DEFAULT_MAX_DETAIL_EVENTS]
-    series_results = parallel_fetch(fetcher, series_urls, force=force, max_workers=8)
-    for series_url in series_urls:
-        result = series_results.get(series_url)
-        if isinstance(result, Exception) or not result:
-            if isinstance(result, Exception):
-                warnings.append(f"{series_url}: {result}")
+    # A few visible cards do not make a complete current program. The sitemap
+    # is additive rather than a last-ditch fallback: it can expose new series
+    # that a partially hydrated calendar or Films directory omits.
+    sitemap_queue = list(ACADEMY_SITEMAP_URLS)
+    checked_sitemaps: set[str] = set()
+    while sitemap_queue and len(checked_sitemaps) < 12:
+        sitemap_url = sitemap_queue.pop(0)
+        if sitemap_url in checked_sitemaps:
             continue
-        series_html, series_checked_at, _ = result
-        pages_checked += 1
-        checked_at = series_checked_at or checked_at
-        event_urls.extend(discover_academy_event_urls(series_html, series_url))
+        checked_sitemaps.add(sitemap_url)
+        try:
+            sitemap_html, sitemap_checked_at, _ = fetcher.fetch(sitemap_url, force=force)
+            checked_at = sitemap_checked_at or checked_at
+            pages_checked += 1
+            event_urls.extend(discover_academy_event_urls(sitemap_html, sitemap_url))
+            series_urls.extend(discover_academy_series_urls(sitemap_html, sitemap_url))
+            for child_url in discover_academy_sitemap_urls(sitemap_html, sitemap_url):
+                if child_url not in checked_sitemaps and child_url not in sitemap_queue:
+                    sitemap_queue.append(child_url)
+        except Exception as error:
+            warnings.append(f"{sitemap_url}: {error}")
 
-    if not event_urls:
-        sitemap_queue = list(ACADEMY_SITEMAP_URLS)
-        checked_sitemaps: set[str] = set()
-        while sitemap_queue and len(checked_sitemaps) < 12 and not event_urls:
-            sitemap_url = sitemap_queue.pop(0)
-            if sitemap_url in checked_sitemaps:
+    # Series pages also expose an official related/current-series graph. Walk
+    # that graph in bounded batches so an old seed can lead to a newly posted
+    # program without relying on a JavaScript calendar.
+    series_queue = list(dict.fromkeys(series_urls))
+    seen_series: set[str] = set()
+    while series_queue and len(seen_series) < DEFAULT_MAX_DETAIL_EVENTS:
+        batch: list[str] = []
+        while series_queue and len(seen_series) + len(batch) < DEFAULT_MAX_DETAIL_EVENTS and len(batch) < 12:
+            series_url = series_queue.pop(0)
+            if series_url in seen_series or series_url in batch:
                 continue
-            checked_sitemaps.add(sitemap_url)
-            try:
-                sitemap_html, sitemap_checked_at, _ = fetcher.fetch(sitemap_url, force=force)
-                checked_at = sitemap_checked_at or checked_at
-                pages_checked += 1
-                event_urls.extend(discover_academy_event_urls(sitemap_html, sitemap_url))
-                for child_url in discover_academy_sitemap_urls(sitemap_html, sitemap_url):
-                    if child_url not in checked_sitemaps and child_url not in sitemap_queue:
-                        sitemap_queue.append(child_url)
-            except Exception as error:
-                warnings.append(f"{sitemap_url}: {error}")
+            batch.append(series_url)
+        if not batch:
+            break
+        series_results = parallel_fetch(fetcher, batch, force=force, max_workers=8)
+        for series_url in batch:
+            seen_series.add(series_url)
+            result = series_results.get(series_url)
+            if isinstance(result, Exception) or not result:
+                if isinstance(result, Exception):
+                    warnings.append(f"{series_url}: {result}")
+                continue
+            series_html, series_checked_at, _ = result
+            pages_checked += 1
+            checked_at = series_checked_at or checked_at
+            event_urls.extend(discover_academy_event_urls(series_html, series_url))
+            for discovered_url in discover_academy_series_urls(series_html, series_url):
+                if discovered_url not in seen_series and discovered_url not in series_queue:
+                    series_queue.append(discovered_url)
 
     unique_event_urls = list(dict.fromkeys(event_urls))[:DEFAULT_MAX_AC_EVENTS]
     detail_results = parallel_fetch(fetcher, unique_event_urls, force=force, max_workers=16)
@@ -3698,7 +4094,7 @@ def _scrape_academy_museum(current: datetime, fetcher: CachedFetcher, force: boo
 
     events = deduplicate_events(events)
     if not events and pages_checked:
-        warnings.append("No future Academy screenings with explicit showtimes found")
+        warnings.insert(0, "No future Academy screenings discovered from reachable official pages")
     if not pages_checked:
         errors.append("No Academy Museum source pages could be reached")
     source = {
@@ -3708,9 +4104,118 @@ def _scrape_academy_museum(current: datetime, fetcher: CachedFetcher, force: boo
         "url": ACADEMY_CALENDAR_URL,
         "adapter": "academy_museum",
         "lastChecked": checked_at,
-        "status": "verified" if not errors and pages_checked else ("degraded" if pages_checked or events else "error"),
+        "status": "verified" if events and not errors else ("degraded" if pages_checked or events else "error"),
         "eventCount": len(events),
         "pagesChecked": pages_checked + len(unique_event_urls),
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "errors": errors[:5],
+        "warnings": warnings[:5],
+    }
+    return {"events": events, "source": source, "errors": errors[:5]}
+
+
+def _scrape_egyptian_theatre(current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
+    """Traverse Egyptian Theatre's official program graph without trusting stale cards."""
+
+    started = time.monotonic()
+    checked_at = iso_utc()
+    errors: list[str] = []
+    warnings: list[str] = []
+    pages_checked = 0
+    index_event_urls: list[str] = []
+    series_urls: list[str] = list(EGYPTIAN_CURRENT_SERIES_SEED_URLS)
+    try:
+        # These public routes can be JavaScript shells, but they still surface
+        # official links on deployments where their data is server-rendered.
+        for index_url in (EGYPTIAN_HOME_URL, EGYPTIAN_SERIES_URL, EGYPTIAN_SPECIAL_ENGAGEMENTS_URL):
+            try:
+                index_html, index_checked_at, _ = fetcher.fetch(index_url, force=force)
+                checked_at = index_checked_at or checked_at
+                pages_checked += 1
+                index_event_urls.extend(discover_egyptian_screening_urls(index_html, index_url))
+                series_urls.extend(discover_egyptian_series_urls(index_html, index_url))
+            except Exception as error:
+                warnings.append(f"{index_url}: {error}")
+
+        # A small number of featured cards is not a complete schedule. Follow
+        # the official sitemap graph in that case, while keeping the bounded
+        # current-series route below ahead of any archival URL set.
+        if len(index_event_urls) < 12:
+            sitemap_queue = list(EGYPTIAN_SITEMAP_URLS)
+            checked_sitemaps: set[str] = set()
+            while sitemap_queue and len(checked_sitemaps) < 12:
+                sitemap_url = sitemap_queue.pop(0)
+                if sitemap_url in checked_sitemaps:
+                    continue
+                checked_sitemaps.add(sitemap_url)
+                try:
+                    sitemap_html, sitemap_checked_at, _ = fetcher.fetch(sitemap_url, force=force)
+                    checked_at = sitemap_checked_at or checked_at
+                    pages_checked += 1
+                    index_event_urls.extend(discover_egyptian_screening_urls(sitemap_html, sitemap_url))
+                    series_urls.extend(discover_egyptian_series_urls(sitemap_html, sitemap_url))
+                    for child_url in discover_egyptian_sitemap_urls(sitemap_html, sitemap_url):
+                        if child_url not in checked_sitemaps and child_url not in sitemap_queue:
+                            sitemap_queue.append(child_url)
+                except Exception as error:
+                    warnings.append(f"{sitemap_url}: {error}")
+
+        series_urls = prioritize_egyptian_series_urls(series_urls, current)[:DEFAULT_MAX_DETAIL_EVENTS]
+        series_event_urls: list[str] = []
+        series_results = parallel_fetch(fetcher, series_urls, force=force, max_workers=12)
+        for series_url in series_urls:
+            result = series_results.get(series_url)
+            if isinstance(result, Exception):
+                warnings.append(f"{series_url}: {result}")
+                continue
+            if not result:
+                continue
+            series_html, series_checked_at, _ = result
+            checked_at = series_checked_at or checked_at
+            pages_checked += 1
+            series_event_urls.extend(discover_egyptian_screening_urls(series_html, series_url))
+
+        # Program pages from current series are ranked ahead of sitemap pages:
+        # this reaches the current slate promptly even when the sitemap also
+        # contains years of archived Egyptian screenings.
+        detail_urls = list(dict.fromkeys([*series_event_urls, *index_event_urls]))[:DEFAULT_MAX_AC_EVENTS]
+        detail_results = parallel_fetch(fetcher, detail_urls, force=force, max_workers=16)
+        events: list[dict] = []
+        for page_url in detail_urls:
+            result = detail_results.get(page_url)
+            if isinstance(result, Exception):
+                warnings.append(f"{page_url}: {result}")
+                continue
+            if not result:
+                continue
+            html, page_checked_at, _ = result
+            pages_checked += 1
+            event = parse_egyptian_event(html, page_url, current)
+            if event:
+                event["sourceLastChecked"] = page_checked_at or checked_at
+                events.append(event)
+        if not detail_urls:
+            warnings.append("Program index: no Egyptian film or screening pages discovered")
+    except Exception as error:
+        errors.append(f"Egyptian Theatre: {error}")
+        events = []
+
+    events = deduplicate_events(events)
+    if not events and pages_checked:
+        warnings.append("No future Egyptian Theatre screening dates found")
+    if not pages_checked:
+        errors.append("No Egyptian Theatre source pages could be reached")
+    source = {
+        "id": "egyptian-theatre",
+        "name": "Egyptian Theatre",
+        "city": "los-angeles",
+        "url": EGYPTIAN_HOME_URL,
+        "adapter": "egyptian_theatre",
+        "required": False,
+        "lastChecked": checked_at,
+        "status": "verified" if not errors and pages_checked else ("degraded" if pages_checked or events else "error"),
+        "eventCount": len(events),
+        "pagesChecked": pages_checked,
         "durationMs": int((time.monotonic() - started) * 1000),
         "errors": errors[:5],
         "warnings": warnings[:5],
@@ -3919,57 +4424,72 @@ def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: 
                 discovered_series_urls.extend(discover_ucla_series_urls(index_html, index_url))
             except Exception as error:
                 warnings.append(f"{index_url}: {error}")
-        if not event_urls:
-            # The calendar and series indexes are client-rendered. Walk the
-            # site's sitemap variants and any child sitemaps so a deployment
-            # change from a URL set to a sitemap index does not make UCLA
-            # appear unavailable.
-            sitemap_queue = list(UCLA_SITEMAP_URLS)
-            checked_sitemaps: set[str] = set()
-            while sitemap_queue and len(checked_sitemaps) < 12 and not event_urls:
-                sitemap_url = sitemap_queue.pop(0)
-                if sitemap_url in checked_sitemaps:
-                    continue
-                checked_sitemaps.add(sitemap_url)
-                try:
-                    sitemap_html, sitemap_checked_at, _ = fetcher.fetch(sitemap_url, force=force)
-                    checked_at = sitemap_checked_at or checked_at
-                    pages_checked += 1
-                    event_urls.extend(discover_ucla_event_urls(sitemap_html, UCLA_EVENTS_URL))
-                    discovered_series_urls.extend(discover_ucla_series_urls(sitemap_html, UCLA_SERIES_URL))
-                    for child_url in discover_ucla_sitemap_urls(sitemap_html, sitemap_url):
-                        if child_url not in checked_sitemaps and child_url not in sitemap_queue:
-                            sitemap_queue.append(child_url)
-                except Exception as error:
-                    warnings.append(f"{sitemap_url}: {error}")
+        # The calendar and series indexes are client-rendered. The sitemap is
+        # additive, not conditional: a shell that happens to include one stale
+        # link must not prevent discovery of the rest of the current program.
+        sitemap_queue = list(UCLA_SITEMAP_URLS)
+        checked_sitemaps: set[str] = set()
+        while sitemap_queue and len(checked_sitemaps) < 12:
+            sitemap_url = sitemap_queue.pop(0)
+            if sitemap_url in checked_sitemaps:
+                continue
+            checked_sitemaps.add(sitemap_url)
+            try:
+                sitemap_html, sitemap_checked_at, _ = fetcher.fetch(sitemap_url, force=force)
+                checked_at = sitemap_checked_at or checked_at
+                pages_checked += 1
+                event_urls.extend(discover_ucla_event_urls(sitemap_html, UCLA_EVENTS_URL))
+                discovered_series_urls.extend(discover_ucla_series_urls(sitemap_html, UCLA_SERIES_URL))
+                for child_url in discover_ucla_sitemap_urls(sitemap_html, sitemap_url):
+                    if child_url not in checked_sitemaps and child_url not in sitemap_queue:
+                        sitemap_queue.append(child_url)
+            except Exception as error:
+                warnings.append(f"{sitemap_url}: {error}")
 
         # UCLA's broad event and series indexes are client-rendered, while
         # individual current series pages contain server-rendered event cards
         # with the official date/time.  Treat those cards as a first-party
         # schedule source, and keep the known current seeds only as a bridge
         # until the sitemap/index tells us about the next program cycle.
-        series_urls = prioritize_ucla_series_urls(
+        series_queue = prioritize_ucla_series_urls(
             [*UCLA_SERIES_SEED_URLS, *discovered_series_urls],
             current,
-        )[:DEFAULT_MAX_DETAIL_EVENTS]
-        series_results = parallel_fetch(fetcher, series_urls, force=force, max_workers=12)
-        for series_url in series_urls:
-            result = series_results.get(series_url)
-            if isinstance(result, Exception):
-                warnings.append(f"{series_url}: {result}")
-                continue
-            if not result:
-                continue
-            series_html, series_checked_at, _ = result
-            checked_at = series_checked_at or checked_at
-            pages_checked += 1
-            # A series card is already an exact date/time authority.  Detail
-            # pages remain useful enrichment, but may not remove an otherwise
-            # valid card if their content structure changes.
-            for event in parse_ucla_series_events(series_html, series_url, current):
-                event["sourceLastChecked"] = series_checked_at or checked_at
-                events.append(event)
-            event_urls.extend(discover_ucla_event_urls(series_html, series_url))
+        )
+        seen_series: set[str] = set()
+        while series_queue and len(seen_series) < DEFAULT_MAX_DETAIL_EVENTS:
+            batch: list[str] = []
+            while series_queue and len(seen_series) + len(batch) < DEFAULT_MAX_DETAIL_EVENTS and len(batch) < 12:
+                series_url = series_queue.pop(0)
+                if series_url in seen_series or series_url in batch:
+                    continue
+                batch.append(series_url)
+            if not batch:
+                break
+            series_results = parallel_fetch(fetcher, batch, force=force, max_workers=12)
+            newly_discovered_series: list[str] = []
+            for series_url in batch:
+                seen_series.add(series_url)
+                result = series_results.get(series_url)
+                if isinstance(result, Exception):
+                    warnings.append(f"{series_url}: {result}")
+                    continue
+                if not result:
+                    continue
+                series_html, series_checked_at, _ = result
+                checked_at = series_checked_at or checked_at
+                pages_checked += 1
+                # A series card is already an exact date/time authority.
+                # Detail pages remain useful enrichment, but may not remove an
+                # otherwise valid card if their content structure changes.
+                for event in parse_ucla_series_events(series_html, series_url, current):
+                    event["sourceLastChecked"] = series_checked_at or checked_at
+                    events.append(event)
+                event_urls.extend(discover_ucla_event_urls(series_html, series_url))
+                newly_discovered_series.extend(discover_ucla_series_urls(series_html, series_url))
+            series_queue = prioritize_ucla_series_urls(
+                [*series_queue, *newly_discovered_series],
+                current,
+            )
 
         # The sitemap contains years of archival event pages. UCLA's dated
         # slugs let us skip historical entries and fetch upcoming pages first,
@@ -3989,13 +4509,13 @@ def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: 
             if event:
                 event["sourceLastChecked"] = page_checked_at or checked_at
                 events.append(event)
-        if not event_urls and not series_urls:
+        if not event_urls and not seen_series:
             warnings.append("Events index: no future event pages or current series pages discovered")
     except Exception as error:
         errors.append(f"UCLA Film & Television Archive: {error}")
     events = deduplicate_events(events)
     if not events and pages_checked:
-        warnings.append("No future UCLA screenings with explicit showtimes found in event or series pages")
+        warnings.insert(0, "No future UCLA screenings discovered from reachable official pages")
     if not pages_checked:
         errors.append("No UCLA Film & Television Archive source pages could be reached")
     source = {
@@ -4006,7 +4526,7 @@ def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: 
         "adapter": "ucla_film_archive",
         "required": False,
         "lastChecked": checked_at,
-        "status": "verified" if not errors and pages_checked else ("degraded" if pages_checked or events else "error"),
+        "status": "verified" if events and not errors else ("degraded" if pages_checked or events else "error"),
         "eventCount": len(events),
         "pagesChecked": pages_checked,
         "durationMs": int((time.monotonic() - started) * 1000),
@@ -4420,6 +4940,7 @@ def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | Non
         "vista-theater": _scrape_vista,
         "vidiots": _scrape_vidiots,
         "academy-museum": _scrape_academy_museum,
+        "egyptian-theatre": _scrape_egyptian_theatre,
         "fine-arts-theatre": _scrape_fine_arts,
         "filmforum": _scrape_filmforum,
         "old-town-music-hall": _scrape_old_town_music_hall,
@@ -4441,6 +4962,7 @@ def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | Non
                     "vista-theater": "Vista Theater Hollywood",
                     "vidiots": "Vidiots",
                     "academy-museum": "Academy Museum of Motion Pictures",
+                    "egyptian-theatre": "Egyptian Theatre",
                     "fine-arts-theatre": "Fine Arts Theatre Beverly Hills",
                     "filmforum": "Los Angeles Filmforum",
                     "old-town-music-hall": "Old Town Music Hall",

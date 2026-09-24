@@ -42,6 +42,7 @@ cannot block the verified feed. The current Los Angeles sources are:
 - [Vista Theater Hollywood Veezi sessions](https://ticketing.uswest.veezi.com/sessions/?siteToken=20xhpa3yt2hhkwt4zjvfcwsaww)
 - [Vidiots](https://vidiotsfoundation.org/) / [Coming Soon](https://vidiotsfoundation.org/coming-soon/)
 - [Academy Museum calendar — Screenings filter](https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O)
+- [Egyptian Theatre](https://www.egyptiantheatre.com/)
 - [Fine Arts Theatre Beverly Hills Veezi sessions](https://ticketing.uswest.veezi.com/sessions/?siteToken=tez3prscsvfbagchhkxbevjwk8)
 - [Los Angeles Filmforum schedule](https://www.lafilmforum.org/schedule/)
 - [Old Town Music Hall](https://www.oldtownmusichall.org/home/)
@@ -64,12 +65,15 @@ Each venue adapter runs concurrently. Within each source, detail pages are
 fetched concurrently with a per-domain request gap, and responses are reused
 from the local HTML cache in `data/cache/`. Showtimes are normalized to America/Los_Angeles,
 past events are removed, duplicate source/title/time records are collapsed,
-and every event keeps its source `sourceUrl`, `sourceName`, and
+and every event keeps its source `sourceId`, `sourceUrl`, `sourceName`, and
 `sourceLastChecked` value. A failed required-source refresh never overwrites
-`last-verified-snapshot.json`. If no verified snapshot exists, the API returns
-an intentional HTTP 503 with source-level errors, a `Retry-After` header, and
-a `retryAfterSeconds` value. Optional-source failures remain visible through
-`/api/sources` and the feed health label.
+`last-verified-snapshot.json`. When one or more sources still verify during
+that outage, their non-empty results replace only their own prior records in a
+clearly degraded current snapshot; failed or zero-result sources retain their
+last verified records. If no verified snapshot exists, the API returns an
+intentional HTTP 503 with source-level errors, a `Retry-After` header, and a
+`retryAfterSeconds` value. Optional-source failures and reachable zero-result
+sources are marked `degraded` through `/api/sources` and the feed health label.
 The browser honors the server's backoff (up to 15 minutes) instead of polling
 every few seconds while a venue is unavailable, so a Vista outage no longer
 fills the terminal with repeated requests.
@@ -80,6 +84,9 @@ canonical schedule remains authoritative when optional detail pages fail: New
 Beverly showtimes come from its Veezi session feed, while detail pages only enrich
 artwork and film metadata. These bounded retries and enrichment warnings do
 not relax the complete required-source verification requirement.
+Academy Museum and UCLA requests use a bounded 12-second timeout by default
+(`RERUN_SLOW_SOURCE_HTTP_TIMEOUT`) because their official program pages can be
+larger or slower than a venue ticketing page.
 
 If the New Beverly Veezi endpoint times out or returns no usable sessions, the
 official New Beverly schedule is used as a clearly labeled fallback so one
@@ -93,7 +100,9 @@ from another event page are not lost. The series calendar cards are the
 authoritative AC schedule layer for title, time, venue, and past-event
 filtering; non-screening headings such as About the Series and Membership are
 excluded; individual event pages only enrich them with artwork and metadata.
-Each event page's primary venue metadata is used for attribution. Vista uses
+Each event page's primary `Locations` metadata is used for attribution and
+takes priority over a conflicting series card, including Directors Village in
+Westwood. Vista uses
 the Veezi session feed as the source of truth for dates, times, sold-out state,
 and special formats;
 Vista movie pages are optional enrichment for artwork and metadata. Vidiots
@@ -112,15 +121,24 @@ slug and uses the page's `Summary` section for metadata.
 The Academy Museum adapter traverses the official calendar's `Screenings`
 program-type filter, follows pagination/load-more calendar links, and then
 opens each linked program detail page for the exact date/time, format, artwork,
-and ticket link. If the calendar is client-rendered, it falls back to the
-official Screenings & Series index, current series pages, and the site's
-sitemap or sitemap index. It accepts only
-detail pages explicitly labelled `Screenings` or `Screening from Series`, so
-conversations, book signings, special events, exhibitions, and related-event
-links are excluded. If Academy has published a screening date but not its
+and ticket link. It always combines that graph with the official Screenings &
+Series index, current series pages, and the Academy sitemap or sitemap index,
+including series links found in XML, so a partially hydrated calendar cannot
+hide newly posted programs. It accepts detail pages whose event content begins
+with `Screening` or `Screenings`, including a `Screening from Series` label
+that shares a block with its series link; conversations, book signings, special
+events, exhibitions, and related-event links remain excluded. If Academy has published a screening date but not its
 clock time, Rerun keeps the date as `Time TBA` and links to the official event
 details rather than inferring a time from a related card. The Academy Museum source is optional for feed health, so
 a temporary museum-site outage does not erase the other official listings.
+
+Egyptian Theatre traversal checks its official home, series, special-engagement,
+and sitemap paths, then follows individual film pages and explicitly
+screening-related event pages. Current program-series links are prioritized
+over archival sitemap URLs. If the Egyptian Theatre has posted a date but not
+a time, the entry is marked `Time TBA`; a matching timed official listing at
+the Egyptian on the same day is kept instead, so one screening is not shown
+twice.
 
 Fine Arts Theatre Beverly Hills uses its official Veezi sessions feed, reusing
 the same canonical session parser as Vista and New Beverly. Filmforum is
@@ -128,11 +146,12 @@ traversed from its official schedule into program detail pages; each detail
 page is authoritative for its own ticket link. Old Town Music Hall is
 traversed from its official homepage into movie pages and their dated
 showtimes. UCLA Film & Television Archive traversal checks the official events
-and series indexes, then walks sitemap indexes and child sitemaps when those
-client-rendered lists contain no links. It also reads exact future event cards
-from UCLA's server-rendered current-series pages, whose dates and times remain
-available even when the broad calendar is JavaScript-only; only future pages
-with screening or film-program markers are retained.
+and series indexes, always walks sitemap indexes and child sitemaps, and then
+follows the bounded official series-to-series graph surfaced by server-rendered
+`Explore other series` cards. It reads exact future event cards from those
+series pages, whose dates and times remain available even when the broad
+calendar is JavaScript-only; only future pages with screening or film-program
+markers are retained.
 All four sources are optional so a source-specific outage cannot invalidate the
 complete feed from the existing required venues.
 

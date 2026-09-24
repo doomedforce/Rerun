@@ -235,6 +235,12 @@ ACADEMY_RELATED_TIME_HTML = """
 </body></html>
 """
 
+ACADEMY_SHARED_LABEL_HTML = """
+<html><head><script type="application/json">{"name":"Hocus Pocus","startDate":"2026-10-03T19:30:00-07:00"}</script></head>
+<body><p>Screening from Series<a href="/programs/series/family-matinees">Family Matinees</a></p>
+<h1>Hocus Pocus</h1><p>Sat, Oct 3, 2026</p></body></html>
+"""
+
 FINE_ARTS_HTML = """
 <html><h2>Fine Arts Theatre Beverly Hills</h2>
 <h3>Wednesday 23, September</h3><h3>Citizen Kane</h3>
@@ -304,6 +310,18 @@ UCLA_SERIES_HTML = """
 <p>Dec 20, 2026</p><p>9:45 pm</p></body></html>
 """
 
+UCLA_SERIES_GRAPH_SEED_HTML = """
+<html><body><h1>Bridge Series</h1>
+<a href="/series/october-program-2026/">October Program</a>
+</body></html>
+"""
+
+UCLA_SERIES_GRAPH_CURRENT_HTML = """
+<html><body><h1>October Program</h1><p>Billy Wilder Theater</p>
+<a href="/events/october-film-2026-10-17/">October Film</a>
+<p>Oct 17, 2026</p><p>7:30 pm</p><p>35mm</p></body></html>
+"""
+
 UCLA_SITEMAP_INDEX_XML = """
 <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <sitemap><loc>https://www.cinema.ucla.edu/events-sitemap.xml</loc></sitemap>
@@ -322,6 +340,40 @@ UCLA_EVENT_SITEMAP_WITH_HISTORY_XML = """
   <url><loc>https://www.cinema.ucla.edu/events/past-event-2026-01-01/</loc></url>
   <url><loc>https://www.cinema.ucla.edu/events/introducing-dorothy-dandridge-2026-12-02/</loc></url>
 </urlset>
+"""
+
+AC_DIRECTORS_VILLAGE_HTML = """
+<html><head><meta property="og:image" content="https://assets.example/primetime.jpg"></head>
+<body><h1>PRIMETIME</h1><p>WED SEP 23, 2026 7:00 PM</p>
+<p>Directors Village | Beyond Fest 2026 Opening Night</p><p>Q&amp;A with filmmaker Lance Oppenheim</p>
+<p>RELEASED IN: 2026</p><p>DIRECTED BY: Lance Oppenheim</p><p>FORMAT: DCP</p>
+<h3>Locations</h3><h4>Directors Village</h4><p>961 Broxton Ave</p></body></html>
+"""
+
+AC_DIRECTORS_SERIES_WRONG_VENUE_HTML = """
+<html><h1>Beyond Fest</h1><p>WED SEP 23, 2026</p><p>7:00 PM</p>
+<h3>PRIMETIME</h3><p>Aero Theatre | Legacy series card</p>
+<a href="/now-showing/primetime-09-23-2026/">View Details</a></html>
+"""
+
+EGYPTIAN_FILM_HTML = """
+<html><head><meta property="og:image" content="https://netflixstrapicentralcms.blob.core.windows.net/egyptian-discovery.jpg"></head>
+<body><p>American Cinematheque at Egyptian</p><p>Fri Sep 25</p><h1>Egyptian Discovery</h1>
+<p>Q&amp;A with the filmmaker</p><p>YEAR</p><p>2026</p><p>FORMAT</p><p>35MM</p><p>DIRECTOR</p><p>Jane Director</p>
+<h2>SYNOPSIS</h2><p>A restored film shown on the Egyptian Theatre's official program.</p>
+<h2>MORE IN THIS SERIES</h2><p>Unrelated recommendation</p></body></html>
+"""
+
+EGYPTIAN_TIMED_EVENT_HTML = """
+<html><body><h1>Egyptian Midnight Film</h1><p>WHEN 9:45 PM SAT SEP 26, 2026</p>
+<p>Screening followed by conversation</p><p>FORMAT</p><p>DCP</p>
+<a href="https://tickets.egyptiantheatre.com/example">Tickets</a></body></html>
+"""
+
+EGYPTIAN_CURRENT_SERIES_HTML = """
+<html><h1>Beyond Fest 2026</h1>
+<a href="/film/egyptian-discovery">Egyptian Discovery</a>
+<a href="/event/egyptian-midnight-film">Egyptian Midnight Film</a></html>
 """
 
 
@@ -402,6 +454,45 @@ class ScraperTests(unittest.TestCase):
                 NOW,
             )
         )
+
+    def test_academy_parser_accepts_screening_label_sharing_a_series_link_block(self):
+        event = scraper.parse_academy_event(
+            ACADEMY_SHARED_LABEL_HTML,
+            "https://www.academymuseum.org/programs/detail/hocus-pocus-example/",
+            NOW,
+        )
+        self.assertIsNotNone(event)
+        self.assertEqual(event["title"], "Hocus Pocus")
+        self.assertEqual(event["startAt"], "2026-10-03T19:30:00-07:00")
+
+    def test_academy_sitemap_is_additive_when_calendar_has_a_card(self):
+        calendar_url = "https://www.academymuseum.org/programs/detail/calendar-screening-example/"
+        series_url = "https://www.academymuseum.org/programs/series/sitemap-series-example/"
+        series_event_url = "https://www.academymuseum.org/programs/detail/sitemap-screening-example/"
+        pages = {
+            scraper.ACADEMY_CALENDAR_URL: '<a href="/programs/detail/calendar-screening-example">Calendar Screening</a>',
+            scraper.ACADEMY_FILMS_URL: "<html></html>",
+            scraper.ACADEMY_SITEMAP_URLS[0]: f"<urlset><url><loc>{series_url}</loc></url></urlset>",
+            series_url: '<a href="/programs/detail/sitemap-screening-example">Sitemap Screening</a>',
+            calendar_url: ACADEMY_DETAIL_HTML.replace("Far from Heaven", "Calendar Screening"),
+            series_event_url: ACADEMY_DETAIL_HTML.replace("Far from Heaven", "Sitemap Screening"),
+        }
+        with patch.object(scraper, "ACADEMY_SERIES_SEED_URLS", ()):
+            result = scraper._scrape_academy_museum(NOW, FakeFetcher(pages), force=True)
+        self.assertEqual(result["source"]["status"], "verified")
+        self.assertEqual({event["title"] for event in result["events"]}, {"Calendar Screening in 35mm", "Sitemap Screening in 35mm"})
+
+    def test_empty_academy_result_is_degraded_with_an_actionable_warning(self):
+        pages = {
+            scraper.ACADEMY_CALENDAR_URL: "<html></html>",
+            scraper.ACADEMY_CALENDAR_FALLBACK_URL: "<html></html>",
+            scraper.ACADEMY_FILMS_URL: "<html></html>",
+            **{url: "<urlset></urlset>" for url in scraper.ACADEMY_SITEMAP_URLS},
+        }
+        with patch.object(scraper, "ACADEMY_SERIES_SEED_URLS", ()):
+            result = scraper._scrape_academy_museum(NOW, FakeFetcher(pages), force=True)
+        self.assertEqual(result["source"]["status"], "degraded")
+        self.assertIn("No future Academy screenings", result["source"]["warnings"][0])
 
     def test_academy_parser_never_uses_a_related_event_time(self):
         event = scraper.parse_academy_event(
@@ -524,6 +615,50 @@ class ScraperTests(unittest.TestCase):
             ["Introducing Dorothy Dandridge", "Malaga / Decks Ran Red"],
         )
 
+    def test_ucla_series_graph_reaches_current_programs_from_a_server_rendered_seed(self):
+        seed_url = "https://www.cinema.ucla.edu/series/bridge-series-2026/"
+        current_series_url = "https://www.cinema.ucla.edu/series/october-program-2026/"
+        event_url = "https://www.cinema.ucla.edu/events/october-film-2026-10-17/"
+        pages = {
+            scraper.UCLA_EVENTS_URL: "<html><p>Data Loading in Progress</p></html>",
+            scraper.UCLA_SERIES_URL: "<html><p>Data Loading in Progress</p></html>",
+            **{url: "<urlset></urlset>" for url in scraper.UCLA_SITEMAP_URLS},
+            seed_url: UCLA_SERIES_GRAPH_SEED_HTML,
+            current_series_url: UCLA_SERIES_GRAPH_CURRENT_HTML,
+            event_url: UCLA_HTML.replace("Introducing Dorothy Dandridge", "October Film").replace("Dec 2, 2026", "Oct 17, 2026").replace("7:00 pm", "7:30 pm"),
+        }
+        with patch.object(scraper, "UCLA_SERIES_SEED_URLS", (seed_url,)):
+            result = scraper._scrape_ucla_film_archive(NOW, FakeFetcher(pages), force=True)
+        self.assertEqual(result["source"]["status"], "verified")
+        self.assertEqual([event["title"] for event in result["events"]], ["October Film"])
+
+    def test_ucla_sitemap_is_additive_when_the_index_has_a_stale_event_link(self):
+        index_event_url = "https://www.cinema.ucla.edu/events/index-film-2026-10-01/"
+        sitemap_event_url = "https://www.cinema.ucla.edu/events/sitemap-film-2026-10-02/"
+        pages = {
+            scraper.UCLA_EVENTS_URL: '<a href="/events/index-film-2026-10-01/">Index Film</a>',
+            scraper.UCLA_SERIES_URL: "<html></html>",
+            **{url: "<urlset></urlset>" for url in scraper.UCLA_SITEMAP_URLS},
+            scraper.UCLA_SITEMAP_URLS[0]: f"<urlset><url><loc>{sitemap_event_url}</loc></url></urlset>",
+            index_event_url: UCLA_HTML.replace("Introducing Dorothy Dandridge", "Index Film").replace("Dec 2, 2026", "Oct 1, 2026"),
+            sitemap_event_url: UCLA_HTML.replace("Introducing Dorothy Dandridge", "Sitemap Film").replace("Dec 2, 2026", "Oct 2, 2026"),
+        }
+        with patch.object(scraper, "UCLA_SERIES_SEED_URLS", ()):
+            result = scraper._scrape_ucla_film_archive(NOW, FakeFetcher(pages), force=True)
+        self.assertEqual(result["source"]["status"], "verified")
+        self.assertEqual({event["title"] for event in result["events"]}, {"Index Film", "Sitemap Film"})
+
+    def test_empty_ucla_result_is_degraded_with_an_actionable_warning(self):
+        pages = {
+            scraper.UCLA_EVENTS_URL: "<html></html>",
+            scraper.UCLA_SERIES_URL: "<html></html>",
+            **{url: "<urlset></urlset>" for url in scraper.UCLA_SITEMAP_URLS},
+        }
+        with patch.object(scraper, "UCLA_SERIES_SEED_URLS", ()):
+            result = scraper._scrape_ucla_film_archive(NOW, FakeFetcher(pages), force=True)
+        self.assertEqual(result["source"]["status"], "degraded")
+        self.assertIn("No future UCLA screenings", result["source"]["warnings"][0])
+
     def test_ucla_parser_stops_before_more_in_this_series(self):
         event = scraper.parse_ucla_event(
             UCLA_RELATED_TIME_HTML,
@@ -548,8 +683,61 @@ class ScraperTests(unittest.TestCase):
         self.assertEqual(result["source"]["eventCount"], 1)
         self.assertEqual(result["events"][0]["sourceUrl"], future_url)
 
+    def test_egyptian_parser_keeps_date_only_listings_and_explicit_times(self):
+        date_only = scraper.parse_egyptian_event(
+            EGYPTIAN_FILM_HTML,
+            "https://www.egyptiantheatre.com/film/egyptian-discovery/",
+            NOW,
+        )
+        self.assertIsNotNone(date_only)
+        self.assertEqual(date_only["venue"], "Egyptian Theatre")
+        self.assertEqual(date_only["startAt"], "2026-09-25T12:00:00-07:00")
+        self.assertEqual(date_only["time"], "Time TBA")
+        self.assertEqual(date_only["ticketStatus"], "details")
+
+        timed = scraper.parse_egyptian_event(
+            EGYPTIAN_TIMED_EVENT_HTML,
+            "https://www.egyptiantheatre.com/event/egyptian-midnight-film/",
+            NOW,
+        )
+        self.assertIsNotNone(timed)
+        self.assertEqual(timed["startAt"], "2026-09-26T21:45:00-07:00")
+        self.assertEqual(timed["time"], "9:45 PM")
+
+    def test_egyptian_scraper_traverses_current_series_without_duplicate_date_only_entries(self):
+        discovery_url = "https://www.egyptiantheatre.com/film/egyptian-discovery/"
+        event_url = "https://www.egyptiantheatre.com/event/egyptian-midnight-film/"
+        pages = {
+            scraper.EGYPTIAN_HOME_URL: '<a href="/film/egyptian-discovery">Egyptian Discovery</a>',
+            scraper.EGYPTIAN_SERIES_URL: "<html></html>",
+            scraper.EGYPTIAN_SPECIAL_ENGAGEMENTS_URL: "<html></html>",
+            **{url: "<urlset></urlset>" for url in scraper.EGYPTIAN_SITEMAP_URLS},
+            scraper.EGYPTIAN_CURRENT_SERIES_SEED_URLS[0]: EGYPTIAN_CURRENT_SERIES_HTML,
+            discovery_url: EGYPTIAN_FILM_HTML,
+            event_url: EGYPTIAN_TIMED_EVENT_HTML,
+        }
+        result = scraper._scrape_egyptian_theatre(NOW, FakeFetcher(pages), force=True)
+        self.assertEqual(result["source"]["status"], "verified")
+        self.assertEqual(result["source"]["eventCount"], 2)
+        self.assertEqual([event["title"] for event in result["events"]], ["Egyptian Discovery", "Egyptian Midnight Film"])
+
+    def test_date_only_source_does_not_duplicate_a_timed_official_listing(self):
+        events = [
+            {
+                "city": "los-angeles", "venue": "Egyptian Theatre", "title": "Egyptian Discovery",
+                "startAt": "2026-09-25T12:00:00-07:00", "time": "Time TBA", "sourceStatus": "verified-egyptian-theatre-date-only",
+            },
+            {
+                "city": "los-angeles", "venue": "Egyptian Theatre", "title": "Egyptian Discovery",
+                "startAt": "2026-09-25T19:30:00-07:00", "time": "7:30 PM", "sourceStatus": "verified",
+            },
+        ]
+        deduped = scraper.deduplicate_events(events)
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(deduped[0]["time"], "7:30 PM")
+
     def test_new_sources_are_optional_and_registered(self):
-        for source_id in ("fine-arts-theatre", "filmforum", "old-town-music-hall", "ucla-film-archive"):
+        for source_id in ("egyptian-theatre", "fine-arts-theatre", "filmforum", "old-town-music-hall", "ucla-film-archive"):
             self.assertIn(source_id, scraper.SOURCE_REGISTRY)
             self.assertFalse(scraper.SOURCE_REGISTRY[source_id].get("required", True))
 
@@ -602,6 +790,31 @@ class ScraperTests(unittest.TestCase):
                 fetcher.fetch(scraper.NEW_BEV_SESSIONS_URL, force=True)
 
             self.assertEqual(mocked_urlopen.call_args.kwargs["timeout"], max(4, scraper.VEEZI_TIMEOUT))
+
+    def test_cached_fetcher_gives_academy_and_ucla_a_longer_timeout(self):
+        class Response:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, limit):
+                return b"<html>ok</html>"
+
+        with TemporaryDirectory() as cache_dir:
+            fetcher = scraper.CachedFetcher(cache_dir=Path(cache_dir), request_gap=0, retries=0, timeout=4)
+            with patch.object(scraper, "urlopen", return_value=Response()) as mocked_urlopen:
+                fetcher.fetch(scraper.ACADEMY_FILMS_URL, force=True)
+            self.assertEqual(mocked_urlopen.call_args.kwargs["timeout"], max(4, scraper.SLOW_SOURCE_TIMEOUT))
+
+        with TemporaryDirectory() as cache_dir:
+            fetcher = scraper.CachedFetcher(cache_dir=Path(cache_dir), request_gap=0, retries=0, timeout=4)
+            with patch.object(scraper, "urlopen", return_value=Response()) as mocked_urlopen:
+                fetcher.fetch(scraper.UCLA_EVENTS_URL, force=True)
+            self.assertEqual(mocked_urlopen.call_args.kwargs["timeout"], max(4, scraper.SLOW_SOURCE_TIMEOUT))
 
     def test_page_parser_collects_lazy_and_responsive_artwork(self):
         parser = scraper.PageParser()
@@ -670,6 +883,29 @@ class ScraperTests(unittest.TestCase):
                 event = scraper.parse_american_cinematheque_event(html, page_url, NOW)
                 self.assertIsNotNone(event)
                 self.assertEqual(event["venue"], expected_venue)
+
+    def test_american_cinematheque_parses_directors_village_from_detail_location(self):
+        event = scraper.parse_american_cinematheque_event(
+            AC_DIRECTORS_VILLAGE_HTML,
+            "https://www.americancinematheque.com/now-showing/primetime-09-23-2026/",
+            NOW,
+        )
+        self.assertIsNotNone(event)
+        self.assertEqual(event["venue"], "Directors Village")
+        self.assertEqual(event["neighborhood"], "Westwood")
+        self.assertEqual(event["address"], "961 Broxton Avenue, Los Angeles, CA 90024")
+
+    def test_ac_detail_location_wins_over_conflicting_series_card_venue(self):
+        series_url = "https://www.americancinematheque.com/series/beyond-fest-2026/"
+        event_url = "https://www.americancinematheque.com/now-showing/primetime-09-23-2026/"
+        pages = {
+            scraper.AC_NOW_SHOWING_URL: f'<a href="{series_url}">Beyond Fest</a>',
+            series_url: AC_DIRECTORS_SERIES_WRONG_VENUE_HTML,
+            event_url: AC_DIRECTORS_VILLAGE_HTML,
+        }
+        with patch.object(scraper, "AC_SEED_URLS", []):
+            result = scraper._scrape_american_cinematheque(NOW, FakeFetcher(pages), force=True)
+        self.assertEqual(result["events"][0]["venue"], "Directors Village")
 
     def test_american_cinematheque_expands_related_events(self):
         straw_url = "https://www.americancinematheque.com/now-showing/straw-dogs-09-08-2026/"

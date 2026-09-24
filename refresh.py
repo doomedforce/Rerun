@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("RERUN_DATA_DIR") or ROOT / "data").expanduser().resolve()
 REFRESH_TTL_SECONDS = int(os.environ.get("RERUN_REFRESH_TTL_SECONDS", "1800"))
 RETRY_BACKOFF_SECONDS = int(os.environ.get("RERUN_REFRESH_RETRY_SECONDS", "600"))
-FEED_POLICY_VERSION = 20
+FEED_POLICY_VERSION = 22
 LOCK_PATH = DATA_DIR / ".refresh.lock"
 
 
@@ -140,6 +140,56 @@ def official_venues() -> list[dict]:
     return venues
 
 
+def event_source_id(event: dict) -> str:
+    """Return an event's configured source id, including older snapshots."""
+
+    explicit = str(event.get("sourceId") or "")
+    if explicit in SOURCE_REGISTRY:
+        return explicit
+    identifier = str(event.get("id") or "")
+    for source_id in SOURCE_REGISTRY:
+        if identifier.startswith(f"{source_id}-"):
+            return source_id
+    source_name = str(event.get("sourceName") or "")
+    for source_id, source in SOURCE_REGISTRY.items():
+        if source.get("name") == source_name:
+            return source_id
+    return ""
+
+
+def merge_partial_source_refresh(existing: list[dict], events: list[dict], sources: list[dict]) -> tuple[list[dict], list[str]]:
+    """Safely surface verified source updates during a required-source outage.
+
+    A failed American Cinematheque or Vista fetch must still leave the last
+    fully verified catalog intact, but it should not hide a successful Academy
+    or UCLA update. Only sources with a non-empty, verified result replace
+    their prior records; every other source remains on the last verified data.
+    """
+
+    fresh_source_ids = {
+        str(source.get("id") or "")
+        for source in sources
+        if source.get("status") == "verified" and int(source.get("eventCount") or 0) > 0
+    }
+    fresh_source_ids.discard("")
+    if not fresh_source_ids:
+        return list(existing), []
+
+    retained = [
+        event
+        for event in existing
+        if not (event.get("city") == "los-angeles" and event_source_id(event) in fresh_source_ids)
+    ]
+    fresh_events = [event for event in events if event_source_id(event) in fresh_source_ids]
+    merged_by_id: dict[str, dict] = {}
+    for event in [*retained, *fresh_events]:
+        identifier = str(event.get("id") or "")
+        if identifier:
+            merged_by_id[identifier] = event
+    merged = sorted(merged_by_id.values(), key=lambda item: item.get("startAt", ""))
+    return merged, sorted(fresh_source_ids)
+
+
 def _refresh_los_angeles(now: datetime | None = None, force: bool = False) -> dict:
     started = utc_now()
     result = scrape_los_angeles(now=now or started.astimezone(LA_TZ), force=force)
@@ -185,12 +235,14 @@ def _refresh_los_angeles(now: datetime | None = None, force: bool = False) -> di
     # Never replace a verified catalog with a partial required-source crawl.
     # On an outage, preserve the separately stored last verified catalog and
     # expose current source diagnostics in the snapshot metadata instead.
+    partial_source_ids: list[str] = []
     if verified:
         merged = sorted(existing_non_la + events, key=lambda item: item.get("startAt", ""))
         write_json("screenings.json", merged)
         write_json("venues.json", official_venues())
     else:
-        merged = prior_verified_screenings if isinstance(prior_verified_screenings, list) else existing
+        baseline = prior_verified_screenings if isinstance(prior_verified_screenings, list) else existing
+        merged, partial_source_ids = merge_partial_source_refresh(baseline, events, sources)
 
     checked_at = result.get("checkedAt") or utc_now().isoformat().replace("+00:00", "Z")
     if verified:
@@ -218,6 +270,8 @@ def _refresh_los_angeles(now: datetime | None = None, force: bool = False) -> di
         "networkRequests": result.get("networkRequests", 0),
         "cacheHits": result.get("cacheHits", 0),
     }
+    if partial_source_ids:
+        meta["partialRefreshSourceIds"] = partial_source_ids
     if verified:
         meta["lastVerifiedAt"] = checked_at
     elif prior_verified_meta.get("lastVerifiedAt"):

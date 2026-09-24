@@ -154,6 +154,57 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(snapshot["meta"]["lastVerifiedAt"], "2026-09-09T00:00:00Z")
             self.assertEqual(snapshot["sources"][0]["status"], "error")
 
+    def test_required_source_outage_still_surfaces_a_verified_optional_source_update(self):
+        prior_event = {
+            "id": "american-cinematheque-prior-film-aero-theatre-20260910-1900",
+            "sourceId": "american-cinematheque",
+            "city": "los-angeles",
+            "title": "Prior Film",
+            "startAt": "2026-09-10T19:00:00-07:00",
+        }
+        fresh_academy_event = {
+            "id": "academy-museum-fresh-film-academy-museum-20261003-1930",
+            "sourceId": "academy-museum",
+            "city": "los-angeles",
+            "title": "Fresh Academy Film",
+            "startAt": "2026-10-03T19:30:00-07:00",
+        }
+        verified_result = {
+            "screenings": [prior_event],
+            "sources": [
+                {"id": "american-cinematheque", "name": "American Cinematheque", "required": True, "status": "verified", "eventCount": 1},
+                {"id": "academy-museum", "name": "Academy Museum of Motion Pictures", "required": False, "status": "degraded", "eventCount": 0},
+            ],
+            "successfulSources": 1,
+            "successfulRequiredSources": 1,
+            "blockingErrors": [],
+            "optionalErrors": [],
+            "checkedAt": "2026-09-09T00:00:00Z",
+        }
+        partial_result = {
+            "screenings": [fresh_academy_event],
+            "sources": [
+                {"id": "american-cinematheque", "name": "American Cinematheque", "required": True, "status": "error", "eventCount": 0, "errors": ["timeout"]},
+                {"id": "academy-museum", "name": "Academy Museum of Motion Pictures", "required": False, "status": "verified", "eventCount": 1},
+            ],
+            "successfulSources": 1,
+            "successfulRequiredSources": 0,
+            "blockingErrors": ["American Cinematheque: timeout"],
+            "optionalErrors": [],
+            "checkedAt": "2026-09-09T01:00:00Z",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            data_dir = Path(directory)
+            with patch.object(refresh, "DATA_DIR", data_dir), patch.object(refresh, "LOCK_PATH", data_dir / ".refresh.lock"), patch.object(refresh, "scrape_los_angeles", side_effect=[verified_result, partial_result]):
+                refresh.refresh_los_angeles(force=True)
+                refresh.refresh_los_angeles(force=True)
+            snapshot = json.loads((data_dir / "snapshot.json").read_text(encoding="utf-8"))
+            last_verified = json.loads((data_dir / "last-verified-snapshot.json").read_text(encoding="utf-8"))
+        self.assertFalse(snapshot["verified"])
+        self.assertEqual({event["title"] for event in snapshot["screenings"]}, {"Prior Film", "Fresh Academy Film"})
+        self.assertEqual(snapshot["meta"]["partialRefreshSourceIds"], ["academy-museum"])
+        self.assertEqual(last_verified["screenings"], [prior_event])
+
     def test_raw_catalog_files_are_not_public_static_assets(self):
         httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.RerunHandler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
