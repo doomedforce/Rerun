@@ -93,6 +93,9 @@ IMAGE_ALLOWED_HOSTS = {
     "indy-systems.imgix.net",
     "cinema.ucla.edu",
     "www.cinema.ucla.edu",
+    "wearebraindead.com",
+    "www.wearebraindead.com",
+    "studios.wearebraindead.com",
 }
 
 

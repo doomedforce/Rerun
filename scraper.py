@@ -175,6 +175,13 @@ ACADEMY_SITEMAP_URLS = (
 FINE_ARTS_SESSIONS_URL = "https://ticketing.uswest.veezi.com/sessions/?siteToken=tez3prscsvfbagchhkxbevjwk8"
 FILMFORUM_SCHEDULE_URL = "https://www.lafilmforum.org/schedule/"
 OLD_TOWN_HOME_URL = "https://www.oldtownmusichall.org/home/"
+BRAIN_DEAD_PROGRAMMING_URL = "https://wearebraindead.com/pages/programming"
+BRAIN_DEAD_COMING_SOON_URL = "https://studios.wearebraindead.com/coming-soon/"
+BRAIN_DEAD_MATO_VENUE_URL = "https://ma.to/venue/braindeadstudiosfairfax"
+BRAIN_DEAD_MATO_VENUE_PAGES = (
+    BRAIN_DEAD_MATO_VENUE_URL,
+    f"{BRAIN_DEAD_MATO_VENUE_URL}?page=2",
+)
 UCLA_EVENTS_URL = "https://www.cinema.ucla.edu/events/"
 UCLA_SERIES_URL = "https://www.cinema.ucla.edu/series/"
 UCLA_SERIES_SEED_URLS = (
@@ -264,6 +271,15 @@ SOURCE_REGISTRY = {
         "city": "los-angeles",
         "url": OLD_TOWN_HOME_URL,
         "adapter": "old_town_music_hall",
+        "required": False,
+    },
+    "brain-dead-studios": {
+        "name": "Brain Dead Studios",
+        "city": "los-angeles",
+        "url": BRAIN_DEAD_PROGRAMMING_URL,
+        "ticketsUrl": BRAIN_DEAD_COMING_SOON_URL,
+        "partnerUrl": BRAIN_DEAD_MATO_VENUE_URL,
+        "adapter": "brain_dead_studios",
         "required": False,
     },
     "ucla-film-archive": {
@@ -387,6 +403,11 @@ VENUE_CATALOG = {
         "name": "Old Town Music Hall",
         "neighborhood": "El Segundo",
         "address": "140 Richmond Street, El Segundo, CA 90245",
+    },
+    "brain dead studios": {
+        "name": "Brain Dead Studios",
+        "neighborhood": "Fairfax",
+        "address": "611 N Fairfax Ave, Los Angeles, CA 90036",
     },
 }
 
@@ -3039,6 +3060,387 @@ def parse_old_town_movie(html: str, page_url: str, now: datetime | None = None) 
     }
 
 
+BRAIN_DEAD_EVENT_DATE_RE = re.compile(
+    rf"\b(?:Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)\.?[,]?\s+(?P<month>{MONTH_PATTERN_SHORT})\.?\s+(?P<day>\d{{1,2}})(?:st|nd|rd|th)?\s*(?:@|at)\s*(?P<hour>\d{{1,2}})(?::(?P<minute>\d{{2}}))?\s*(?P<meridiem>[ap]\.?(?:m)\.?)\b",
+    re.I,
+)
+BRAIN_DEAD_HOSTS = {"studios.wearebraindead.com"}
+BRAIN_DEAD_SCREENING_SIGNAL_RE = re.compile(
+    r"\b(?:film|movie|screening|documentary|cinema|(?:16|35|70)\s*mm|dcp)\b",
+    re.I,
+)
+BRAIN_DEAD_NON_SCREENING_RE = re.compile(
+    r"\b(?:live|concert|dj\b|workshop|synth|dance party|listening party|comedy)\b",
+    re.I,
+)
+BRAIN_DEAD_CURATED_FILM_SERIES_RE = re.compile(r"^chat pile presents:\s+", re.I)
+BRAIN_DEAD_DETAIL_STOP_MARKERS = (
+    *DETAIL_CONTENT_STOP_MARKERS,
+    "film club membership",
+    "more movies",
+    "more events",
+    "recommended",
+    "related events in los angeles",
+)
+MATO_HOSTS = {"ma.to", "www.ma.to"}
+MATO_DAY_FIRST_DATE_RE = re.compile(
+    rf"\b(?:Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)\.?[,]?\s*(?P<day>\d{{1,2}})(?:st|nd|rd|th)?\s+(?P<month>{MONTH_PATTERN_SHORT})(?:,?\s*(?P<year>20\d{{2}}))?\b",
+    re.I,
+)
+MATO_24_HOUR_TIME_RE = re.compile(r"\b(?P<hour>[01]?\d|2[0-3]):(?P<minute>[0-5]\d)\b")
+
+
+def clean_brain_dead_title(value: object) -> str:
+    """Remove the venue suffix used on some Brain Dead program cards."""
+
+    return normalize_space(re.sub(r"\s*@\s*brain dead studios\s*$", "", normalize_space(value), flags=re.I))
+
+
+def parse_brain_dead_programming_datetime(value: object, now: datetime) -> datetime | None:
+    """Read Brain Dead's compact no-year program-card date/time label."""
+
+    match = BRAIN_DEAD_EVENT_DATE_RE.search(normalize_space(value))
+    if not match:
+        return None
+    current = as_la(now)
+    values = match.groupdict()
+    try:
+        hour, minute = parse_time(values["hour"], values.get("minute") or "00", values["meridiem"])
+        candidate = datetime(
+            current.year,
+            MONTHS[values["month"].lower()[:3]],
+            int(values["day"]),
+            hour,
+            minute,
+            tzinfo=LA_TZ,
+        )
+        # The public page omits a year.  Around New Year, a card dated many
+        # months before the current day belongs to the following calendar year.
+        if candidate.date() < current.date() and (current.date() - candidate.date()).days > 180:
+            candidate = candidate.replace(year=candidate.year + 1)
+        return candidate
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def is_brain_dead_screening_title(value: object) -> bool:
+    """Conservatively classify an unlinked Brain Dead program card."""
+
+    title = normalize_space(value)
+    if not title or BRAIN_DEAD_NON_SCREENING_RE.search(title):
+        return False
+    if BRAIN_DEAD_SCREENING_SIGNAL_RE.search(title):
+        return True
+    # The official programming page currently labels the Chat Pile film run
+    # without the word "film"; each matching card resolves to the Studio's
+    # ``/movies/`` section. Keep this exact series marker rather than guessing
+    # that every artist-presented event is a screening.
+    return bool(BRAIN_DEAD_CURATED_FILM_SERIES_RE.search(title))
+
+
+def normalize_brain_dead_detail_url(value: object, base_url: str = BRAIN_DEAD_COMING_SOON_URL) -> str:
+    """Accept only canonical official Brain Dead movie/special-event pages."""
+
+    raw = unescape(str(value or "")).replace("\\/", "/").strip()
+    if not raw:
+        return ""
+    parsed = urlsplit(urljoin(base_url, raw).split("#", 1)[0])
+    if parsed.scheme != "https" or parsed.netloc.lower() not in BRAIN_DEAD_HOSTS:
+        return ""
+    path = parsed.path.rstrip("/")
+    if not path.startswith(("/movies/", "/special_events/")):
+        return ""
+    return urlunsplit(("https", "studios.wearebraindead.com", path + "/", "", ""))
+
+
+def brain_dead_detail_kind(page_url: object) -> str:
+    """Classify a canonical Brain Dead detail path without guessing by title."""
+
+    path = urlsplit(str(page_url or "")).path.rstrip("/")
+    if path.startswith("/movies/"):
+        return "movie"
+    if path.startswith("/special_events/"):
+        return "special-event"
+    return ""
+
+
+def discover_brain_dead_detail_pages(html: str, base_url: str = BRAIN_DEAD_COMING_SOON_URL) -> list[dict]:
+    """Discover official movie and special-event URLs from the current slate."""
+
+    parser = parse_html(html)
+    candidates = [link.get("href", "") for link in parser.links]
+    candidates.extend(
+        match.group(0)
+        for match in re.finditer(
+            r"(?:(?:https?:)?//studios\.wearebraindead\.com)?/(?:movies|special_events)/[^\"'<>\s?#]+",
+            html.replace("\\/", "/"),
+            re.I,
+        )
+    )
+    pages: list[dict] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        page_url = normalize_brain_dead_detail_url(candidate, base_url)
+        if not page_url or page_url in seen:
+            continue
+        seen.add(page_url)
+        pages.append({"pageUrl": page_url, "kind": brain_dead_detail_kind(page_url)})
+    return pages
+
+
+def is_brain_dead_program_card_screening(title: object, page_url: object = "") -> bool:
+    """Use official URL taxonomy before falling back to conservative title clues."""
+
+    kind = brain_dead_detail_kind(page_url)
+    if kind == "movie":
+        return True
+    if kind == "special-event":
+        return bool(BRAIN_DEAD_SCREENING_SIGNAL_RE.search(normalize_space(title)))
+    return is_brain_dead_screening_title(title)
+
+
+def parse_brain_dead_programming(html: str, now: datetime | None = None) -> list[dict]:
+    """Parse future LA screenings from Brain Dead's official program page.
+
+    The public page intentionally mixes music, workshops, and cinema. An
+    official ``/movies/`` URL is definitive and always passes; unlinked cards
+    remain deliberately conservative, and special events still need a visible
+    film/screening signal.
+    """
+
+    current = as_la(now)
+    parser = parse_html(html)
+    lines = parser.lines
+    start = next(
+        (index + 1 for index, line in enumerate(lines) if normalize_key(line).rstrip(":") == "upcoming events"),
+        0,
+    )
+    direct_urls: dict[str, str] = {}
+    for link in parser.links:
+        page_url = normalize_brain_dead_detail_url(link.get("href", ""), BRAIN_DEAD_PROGRAMMING_URL)
+        title = clean_brain_dead_title(link.get("text", ""))
+        if page_url and title:
+            direct_urls.setdefault(normalize_key(title), page_url)
+
+    entries: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for index, line in enumerate(lines[start:], start):
+        start_at = parse_brain_dead_programming_datetime(line, current)
+        if not start_at or start_at <= current:
+            continue
+        card_lines = lines[max(start, index - 4):index]
+        if not any("los angeles" in normalize_key(candidate) for candidate in card_lines):
+            continue
+        title = next(
+            (
+                clean_brain_dead_title(candidate)
+                for candidate in reversed(card_lines)
+                if "los angeles" not in normalize_key(candidate)
+                and normalize_key(candidate).rstrip(":") != "upcoming events"
+            ),
+            "",
+        )
+        page_url = direct_urls.get(normalize_key(title), BRAIN_DEAD_PROGRAMMING_URL)
+        if not is_brain_dead_program_card_screening(title, page_url):
+            continue
+        title_key = screening_title_key(title)
+        key = (title_key, as_la(start_at).isoformat())
+        if not title_key or key in seen:
+            continue
+        seen.add(key)
+        entries.append(
+            {
+                "title": title,
+                "startAt": start_at,
+                "pageUrl": page_url,
+                "ticketUrl": page_url if page_url != BRAIN_DEAD_PROGRAMMING_URL else BRAIN_DEAD_COMING_SOON_URL,
+            }
+        )
+    return entries
+
+
+def brain_dead_detail_content_lines(parser: PageParser, title: str) -> list[str]:
+    """Keep one Brain Dead detail page's own body, not its site-wide rails."""
+
+    lines = primary_event_lines(parser.lines, BRAIN_DEAD_DETAIL_STOP_MARKERS)
+    title_key = screening_title_key(title)
+    title_index = next(
+        (index for index, line in enumerate(lines) if screening_title_key(line) == title_key),
+        0,
+    )
+    return lines[title_index:]
+
+
+def parse_brain_dead_detail_showtimes(html: str, lines: list[str], now: datetime) -> list[dict]:
+    """Read direct-page event dates, retaining a date-only fallback when needed."""
+
+    current = as_la(now)
+    exact: dict[str, datetime] = {}
+    date_only: dict[str, datetime] = {}
+    for record in walk_json(academy_json_documents(html)):
+        candidate = _academy_record_datetime(record)
+        if candidate:
+            local = as_la(candidate)
+            exact.setdefault(local.isoformat(), local)
+    for index, line in enumerate(lines):
+        candidate = parse_academy_text_datetime(line)
+        if candidate:
+            local = as_la(candidate)
+            exact.setdefault(local.isoformat(), local)
+            continue
+        date_parts = academy_date_parts(line)
+        if not date_parts:
+            continue
+        matched_time = None
+        for nearby in lines[index + 1:index + 4]:
+            if not TIME_RE.search(nearby):
+                continue
+            matched_time = parse_academy_text_datetime(f"{line} {nearby}")
+            if matched_time:
+                break
+        if matched_time:
+            local = as_la(matched_time)
+            exact.setdefault(local.isoformat(), local)
+            continue
+        year, month, day = date_parts
+        try:
+            local = datetime(year, month, day, 12, 0, tzinfo=LA_TZ)
+        except ValueError:
+            continue
+        date_only.setdefault(local.date().isoformat(), local)
+
+    results: list[dict] = []
+    if exact:
+        for start_at in sorted(exact.values()):
+            if start_at > current:
+                results.append({"startAt": start_at, "timeLabel": None})
+        return results
+    for start_at in sorted(date_only.values()):
+        if start_at.date() >= current.date():
+            results.append({"startAt": start_at, "timeLabel": "Time TBA"})
+    return results
+
+
+def parse_brain_dead_detail(html: str, page_url: str, now: datetime | None = None) -> dict:
+    """Parse an official Brain Dead movie or explicitly film-labelled special event."""
+
+    current = as_la(now)
+    kind = brain_dead_detail_kind(page_url)
+    if not kind:
+        return {}
+    parser = parse_html(html)
+    title = next(
+        (heading["text"] for heading in parser.headings if heading.get("tag") == "h1" and heading.get("text")),
+        normalize_space(parser.meta.get("og:title", "")).split("|", 1)[0],
+    )
+    if not title:
+        return {}
+    lines = brain_dead_detail_content_lines(parser, title)
+    if kind == "special-event" and not BRAIN_DEAD_SCREENING_SIGNAL_RE.search(" ".join([title, *lines[:24]])):
+        return {}
+    showtimes = parse_brain_dead_detail_showtimes(html, lines, current)
+    if not showtimes:
+        return {}
+    formats = []
+    for token in re.findall(r"\b(?:35|70|16)mm\b|\b(?:DCP|Digital|Video)\b", " ".join(lines), re.I):
+        normalized = token.upper() if token.upper() in {"DCP", "DIGITAL", "VIDEO"} else token.lower()
+        if normalized not in formats:
+            formats.append(normalized)
+    return {
+        "title": title,
+        "showtimes": showtimes,
+        "format": " / ".join(formats),
+        "synopsis": " ".join(lines[1:])[:520],
+        "notes": " · ".join(
+            dict.fromkeys(
+                line for line in lines
+                if any(marker in normalize_key(line) for marker in ("in person", "q&a", "presented by", "introduced by"))
+            )
+        )[:220],
+        "ticketUrl": pick_ticket_url(parser, page_url),
+        "image": (absolute_images(parser, page_url) or [""])[0],
+    }
+
+
+def brain_dead_mato_upcoming_fragment(html: str) -> str:
+    """Return only Mato's upcoming cards, never its historical event rail."""
+
+    start_match = re.search(r"upcoming\s+events", html, re.I)
+    if not start_match:
+        return ""
+    remainder = html[start_match.end():]
+    end_match = re.search(r"(?:past\s+events|frequently\s+asked\s+questions)", remainder, re.I)
+    return remainder[:end_match.start()] if end_match else remainder
+
+
+def discover_brain_dead_mato_event_urls(html: str, base_url: str = BRAIN_DEAD_MATO_VENUE_URL) -> list[str]:
+    """Discover only venue-calendar cards explicitly tagged Film by Mato."""
+
+    parser = parse_html(brain_dead_mato_upcoming_fragment(html))
+    urls: list[str] = []
+    for link in parser.links:
+        label = normalize_key(link.get("text", ""))
+        if not re.search(r"\bfilm\b", label):
+            continue
+        page_url = urljoin(base_url, link.get("href", "")).split("#", 1)[0]
+        parsed = urlsplit(page_url)
+        if parsed.scheme != "https" or parsed.netloc.lower() not in MATO_HOSTS or not parsed.path.startswith("/event/"):
+            continue
+        normalized = urlunsplit(("https", "ma.to", parsed.path.rstrip("/"), "", ""))
+        if normalized not in urls:
+            urls.append(normalized)
+    return urls
+
+
+def parse_brain_dead_mato_event(html: str, page_url: str, now: datetime | None = None) -> dict:
+    """Parse a clearly labelled Film event from Brain Dead's Mato venue fallback."""
+
+    current = as_la(now)
+    parser = parse_html(html)
+    title = next(
+        (heading["text"] for heading in parser.headings if heading.get("tag") == "h1" and heading.get("text")),
+        "",
+    )
+    if not title:
+        return {}
+    lines = primary_event_lines(parser.lines, BRAIN_DEAD_DETAIL_STOP_MARKERS)
+    title_index = next((index for index, line in enumerate(lines) if screening_title_key(line) == screening_title_key(title)), 0)
+    lines = lines[title_index:]
+    start_at = None
+    time_label = "Time TBA"
+    for index, line in enumerate(lines):
+        match = MATO_DAY_FIRST_DATE_RE.search(line)
+        if not match:
+            continue
+        values = match.groupdict()
+        try:
+            year = int(values.get("year") or current.year)
+            candidate = datetime(year, MONTHS[values["month"].lower()[:3]], int(values["day"]), 12, 0, tzinfo=LA_TZ)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not values.get("year") and candidate.date() < current.date() and (current.date() - candidate.date()).days > 180:
+            candidate = candidate.replace(year=candidate.year + 1)
+        for nearby in lines[index + 1:index + 4]:
+            time_match = MATO_24_HOUR_TIME_RE.search(nearby)
+            if not time_match:
+                continue
+            candidate = candidate.replace(hour=int(time_match.group("hour")), minute=int(time_match.group("minute")))
+            time_label = None
+            break
+        start_at = candidate
+        break
+    if not start_at:
+        return {}
+    if (time_label is None and start_at <= current) or (time_label and start_at.date() < current.date()):
+        return {}
+    return {
+        "title": title,
+        "startAt": start_at,
+        "timeLabel": time_label,
+        "synopsis": " ".join(lines[1:])[:520],
+    }
+
+
 UCLA_HOSTS = {"cinema.ucla.edu", "www.cinema.ucla.edu"}
 UCLA_EVENT_URL_DATE_RE = re.compile(r"-(20\d{2})-(\d{2})-(\d{2})/?$")
 UCLA_SERIES_URL_YEAR_RE = re.compile(r"-(20\d{2})/?$", re.I)
@@ -3053,6 +3455,43 @@ def _ucla_normalize_url(value: str, base_url: str) -> str:
     if parsed.scheme != "https" or parsed.netloc.lower() not in UCLA_HOSTS:
         return ""
     return urlunsplit(("https", parsed.netloc.lower(), parsed.path, parsed.query, ""))
+
+
+def ucla_canonical_event_url(value: object) -> str:
+    """Return one stable key for the same UCLA event across www/no-www links."""
+
+    normalized = _ucla_normalize_url(str(value or ""), UCLA_EVENTS_URL)
+    if not normalized:
+        return ""
+    parsed = urlsplit(normalized)
+    path = parsed.path.rstrip("/")
+    if not path.startswith("/events/"):
+        return ""
+    return urlunsplit(("https", "www.cinema.ucla.edu", path + "/", "", ""))
+
+
+def merge_ucla_series_detail_event(series_event: dict, detail_event: dict) -> dict:
+    """Enrich one series card without creating a second UCLA screening.
+
+    UCLA's series card is the schedule authority because it exposes its exact
+    date/time in the server-rendered page. Detail pages are enrichment only:
+    their layout can omit a time or parse one differently, but they share the
+    same official event URL and must never create a second card.
+    """
+
+    merged = dict(series_event)
+    placeholder_values = {"", "—", "not listed", "format not listed"}
+    for field in ("director", "year", "format", "synopsis", "notes", "image", "imageAlt", "imageCredit", "imageSource"):
+        value = detail_event.get(field)
+        if normalize_key(value) not in placeholder_values:
+            merged[field] = value
+    if normalize_space(detail_event.get("ticketUrl", "")):
+        merged["ticketUrl"] = detail_event["ticketUrl"]
+    if normalize_space(detail_event.get("ticketStatus", "")):
+        merged["ticketStatus"] = detail_event["ticketStatus"]
+    merged["sourceLastChecked"] = detail_event.get("sourceLastChecked") or series_event.get("sourceLastChecked") or iso_utc()
+    merged["sourceStatus"] = "verified-ucla-series-enriched"
+    return merged
 
 
 def discover_ucla_sitemap_urls(html: str, base_url: str) -> list[str]:
@@ -4405,12 +4844,198 @@ def _scrape_old_town_music_hall(current: datetime, fetcher: CachedFetcher, force
     return {"events": events, "source": source, "errors": errors[:5]}
 
 
+def _scrape_brain_dead_studios(current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
+    """Index the official slate, with an explicitly labelled venue fallback."""
+
+    started = time.monotonic()
+    checked_at = iso_utc()
+    errors: list[str] = []
+    warnings: list[str] = []
+    events: list[dict] = []
+    pages_checked = 0
+    source_modes: list[str] = []
+    official_detail_pages: list[dict] = []
+    unresolved_official_movies = False
+
+    # The Studio's own Coming Soon page is the canonical slate. A ``/movies/``
+    # path is categorically a screening, while a ``/special_events/`` path is
+    # parsed only if its detail page says film or screening.
+    try:
+        slate_html, slate_checked_at, _ = fetcher.fetch(BRAIN_DEAD_COMING_SOON_URL, force=force)
+        checked_at = slate_checked_at or checked_at
+        pages_checked += 1
+        official_detail_pages = discover_brain_dead_detail_pages(slate_html, BRAIN_DEAD_COMING_SOON_URL)
+        if not official_detail_pages:
+            warnings.append("Coming Soon: no official movie or special-event pages discovered")
+    except Exception as error:
+        warnings.append(f"Coming Soon unavailable: {error}")
+
+    if official_detail_pages:
+        detail_urls = [entry["pageUrl"] for entry in official_detail_pages]
+        detail_results = parallel_fetch(fetcher, detail_urls, force=force, max_workers=12)
+        for detail_page in official_detail_pages:
+            page_url = detail_page["pageUrl"]
+            result = detail_results.get(page_url)
+            if isinstance(result, Exception):
+                warnings.append(f"{page_url}: {result}")
+                if detail_page["kind"] == "movie":
+                    unresolved_official_movies = True
+                continue
+            if not result:
+                if detail_page["kind"] == "movie":
+                    unresolved_official_movies = True
+                continue
+            html, page_checked_at, _ = result
+            checked_at = page_checked_at or checked_at
+            pages_checked += 1
+            details = parse_brain_dead_detail(html, page_url, current)
+            if not details:
+                if detail_page["kind"] == "movie":
+                    unresolved_official_movies = True
+                    warnings.append(f"{page_url}: no future movie showtime found")
+                continue
+            for showtime in details["showtimes"]:
+                event = make_event(
+                    source_id="brain-dead-studios",
+                    source_name="Brain Dead Studios",
+                    title=details["title"],
+                    start_at=showtime["startAt"],
+                    now=current,
+                    page_url=page_url,
+                    ticket_url=details.get("ticketUrl") or page_url,
+                    venue="Brain Dead Studios",
+                    format_name=details.get("format", ""),
+                    synopsis=details.get("synopsis", ""),
+                    notes=details.get("notes", ""),
+                    image=details.get("image", ""),
+                    source_page_url=BRAIN_DEAD_COMING_SOON_URL,
+                    detail_status=f"verified-brain-dead-{detail_page['kind']}",
+                    ticket_status="details",
+                    time_label=showtime.get("timeLabel"),
+                )
+                event["sourceLastChecked"] = page_checked_at or checked_at
+                events.append(event)
+        if events:
+            source_modes.append("official-slate")
+
+    # The first-party Programming page remains a useful date/time supplement
+    # when a protected detail page is temporarily unavailable. It is not used
+    # to decide whether a linked ``/movies/`` entry is a screening.
+    try:
+        program_html, program_checked_at, _ = fetcher.fetch(BRAIN_DEAD_PROGRAMMING_URL, force=force)
+        checked_at = program_checked_at or checked_at
+        pages_checked += 1
+        program_entries = parse_brain_dead_programming(program_html, current)
+        for entry in program_entries:
+            event = make_event(
+                source_id="brain-dead-studios",
+                source_name="Brain Dead Studios",
+                title=entry["title"],
+                start_at=entry["startAt"],
+                now=current,
+                page_url=entry["pageUrl"],
+                ticket_url=entry["ticketUrl"],
+                venue="Brain Dead Studios",
+                synopsis="Official Brain Dead Studios film-program listing.",
+                source_page_url=BRAIN_DEAD_PROGRAMMING_URL,
+                detail_status="verified-brain-dead-programming-fallback",
+                ticket_status="details",
+            )
+            event["sourceLastChecked"] = program_checked_at or checked_at
+            events.append(event)
+        if program_entries:
+            source_modes.append("official-programming")
+        else:
+            warnings.append("Programming: no future film or screening cards discovered")
+    except Exception as error:
+        warnings.append(f"Programming unavailable: {error}")
+
+    # If the protected official slate cannot yield every movie detail, use the
+    # venue's public Mato calendar as a transparent fallback. It supplies only
+    # cards explicitly tagged Film and each resulting Rerun event is labeled
+    # as a partner listing rather than pretending it came from the Studio site.
+    if not official_detail_pages or unresolved_official_movies:
+        partner_event_urls: list[str] = []
+        for venue_page_url in BRAIN_DEAD_MATO_VENUE_PAGES:
+            try:
+                venue_html, venue_checked_at, _ = fetcher.fetch(venue_page_url, force=force)
+                checked_at = venue_checked_at or checked_at
+                pages_checked += 1
+                partner_event_urls.extend(discover_brain_dead_mato_event_urls(venue_html, venue_page_url))
+            except Exception as error:
+                warnings.append(f"Mato venue fallback unavailable: {error}")
+        partner_event_urls = list(dict.fromkeys(partner_event_urls))
+        partner_results = parallel_fetch(fetcher, partner_event_urls, force=force, max_workers=12)
+        partner_events = 0
+        for page_url in partner_event_urls:
+            result = partner_results.get(page_url)
+            if isinstance(result, Exception):
+                warnings.append(f"{page_url}: {result}")
+                continue
+            if not result:
+                continue
+            html, page_checked_at, _ = result
+            checked_at = page_checked_at or checked_at
+            pages_checked += 1
+            details = parse_brain_dead_mato_event(html, page_url, current)
+            if not details:
+                continue
+            event = make_event(
+                source_id="brain-dead-studios",
+                source_name="Brain Dead Studios",
+                title=details["title"],
+                start_at=details["startAt"],
+                now=current,
+                page_url=page_url,
+                ticket_url=page_url,
+                venue="Brain Dead Studios",
+                synopsis=details.get("synopsis", ""),
+                source_page_url=BRAIN_DEAD_MATO_VENUE_URL,
+                detail_status="partner-fallback",
+                ticket_status="details",
+                time_label=details.get("timeLabel"),
+            )
+            event["sourceLastChecked"] = page_checked_at or checked_at
+            event["sourceLabel"] = "Partner listing · Mato / Brain Dead Studios"
+            events.append(event)
+            partner_events += 1
+        if partner_events:
+            source_modes.append("partner-fallback")
+
+    events = deduplicate_events(events)
+    if not events and pages_checked:
+        warnings.append("No future Brain Dead Studios screenings discovered")
+    if not pages_checked:
+        errors.append("No Brain Dead Studios source pages could be reached")
+    source = {
+        "id": "brain-dead-studios",
+        "name": "Brain Dead Studios",
+        "city": "los-angeles",
+        "url": BRAIN_DEAD_PROGRAMMING_URL,
+        "slateUrl": BRAIN_DEAD_COMING_SOON_URL,
+        "ticketsUrl": BRAIN_DEAD_COMING_SOON_URL,
+        "partnerUrl": BRAIN_DEAD_MATO_VENUE_URL,
+        "adapter": "brain_dead_studios",
+        "required": False,
+        "sourceMode": " + ".join(source_modes) if source_modes else "unavailable",
+        "lastChecked": checked_at,
+        "status": "verified" if events and not errors else ("degraded" if pages_checked or events else "error"),
+        "eventCount": len(events),
+        "pagesChecked": pages_checked,
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "errors": errors[:5],
+        "warnings": warnings[:5],
+    }
+    return {"events": events, "source": source, "errors": errors[:5]}
+
+
 def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
     started = time.monotonic()
     checked_at = iso_utc()
     errors: list[str] = []
     warnings: list[str] = []
     events: list[dict] = []
+    series_event_indexes: dict[str, int] = {}
     pages_checked = 0
     try:
         event_urls: list[str] = []
@@ -4483,6 +5108,11 @@ def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: 
                 # otherwise valid card if their content structure changes.
                 for event in parse_ucla_series_events(series_html, series_url, current):
                     event["sourceLastChecked"] = series_checked_at or checked_at
+                    event_key = ucla_canonical_event_url(event.get("sourceUrl", ""))
+                    if event_key and event_key in series_event_indexes:
+                        continue
+                    if event_key:
+                        series_event_indexes[event_key] = len(events)
                     events.append(event)
                 event_urls.extend(discover_ucla_event_urls(series_html, series_url))
                 newly_discovered_series.extend(discover_ucla_series_urls(series_html, series_url))
@@ -4508,7 +5138,12 @@ def _scrape_ucla_film_archive(current: datetime, fetcher: CachedFetcher, force: 
             event = parse_ucla_event(html, page_url, current)
             if event:
                 event["sourceLastChecked"] = page_checked_at or checked_at
-                events.append(event)
+                event_key = ucla_canonical_event_url(event.get("sourceUrl", "") or page_url)
+                series_index = series_event_indexes.get(event_key)
+                if series_index is not None:
+                    events[series_index] = merge_ucla_series_detail_event(events[series_index], event)
+                else:
+                    events.append(event)
         if not event_urls and not seen_series:
             warnings.append("Events index: no future event pages or current series pages discovered")
     except Exception as error:
@@ -4944,6 +5579,7 @@ def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | Non
         "fine-arts-theatre": _scrape_fine_arts,
         "filmforum": _scrape_filmforum,
         "old-town-music-hall": _scrape_old_town_music_hall,
+        "brain-dead-studios": _scrape_brain_dead_studios,
         "ucla-film-archive": _scrape_ucla_film_archive,
     }
     results: dict[str, dict] = {}
@@ -4966,6 +5602,7 @@ def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | Non
                     "fine-arts-theatre": "Fine Arts Theatre Beverly Hills",
                     "filmforum": "Los Angeles Filmforum",
                     "old-town-music-hall": "Old Town Music Hall",
+                    "brain-dead-studios": "Brain Dead Studios",
                     "ucla-film-archive": "UCLA Film & Television Archive",
                 }[source_id]
                 results[source_id] = {

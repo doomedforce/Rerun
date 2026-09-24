@@ -322,6 +322,72 @@ UCLA_SERIES_GRAPH_CURRENT_HTML = """
 <p>Oct 17, 2026</p><p>7:30 pm</p><p>35mm</p></body></html>
 """
 
+BRAIN_DEAD_PROGRAMMING_HTML = """
+<html><body><h2>UPCOMING EVENTS</h2>
+<article><a href="https://studios.wearebraindead.com/movies/chat-pile-presents-teen-witch/">CHAT PILE PRESENTS: TEEN WITCH</a>
+<p>⚲ LOS ANGELES, CA</p><p>• THU, OCT 1ST @ 7PM</p></article>
+<article><p>ELEPHANT GYM: MORE REAL THAN DREAMS DOCUMENTARY</p>
+<p>⚲ LOS ANGELES, CA</p><p>• TUE, OCT 13TH @ 7PM</p></article>
+<article><p>50/50 HORROR • SHORT FILM FESTIVAL</p>
+<p>⚲ LOS ANGELES, CA</p><p>• SUN, OCT 18TH @ 6PM</p></article>
+<article><p>MELAINA KOL LIVE + SPECIAL GUESTS @ BRAIN DEAD STUDIOS</p>
+<p>⚲ LOS ANGELES, CA</p><p>• MON, OCT 5TH @ 7PM</p></article>
+<article><p>BUILD YOUR OWN SYNTH @ BRAIN DEAD STUDIOS</p>
+<p>⚲ LOS ANGELES, CA</p><p>• FRI, SEP 25TH @ 5PM</p></article>
+<article><p>OUT-OF-TOWN FILM SCREENING</p>
+<p>⚲ MASPETH, NY</p><p>• THU, OCT 29TH @ 7PM</p></article>
+<h2>BRAIN DEAD STUDIOS</h2><p>611 N Fairfax Ave, Los Angeles, CA 90036</p>
+</body></html>
+"""
+
+BRAIN_DEAD_LINKED_MOVIE_PROGRAMMING_HTML = """
+<html><body><h2>UPCOMING EVENTS</h2>
+<article><a href="https://studios.wearebraindead.com/movies/boy-meets-girl/">BOY MEETS GIRL</a>
+<p>⚲ LOS ANGELES, CA</p><p>• FRI, SEP 25TH @ 7PM</p></article>
+<article><a href="https://studios.wearebraindead.com/special_events/night-patrol/">NIGHT PATROL</a>
+<p>⚲ LOS ANGELES, CA</p><p>• FRI, SEP 25TH @ 9PM</p></article>
+</body></html>
+"""
+
+BRAIN_DEAD_COMING_SOON_HTML = """
+<html><body>
+<a href="/movies/boy-meets-girl/">Boy Meets Girl</a>
+<a href="/special_events/night-patrol/">Night Patrol</a>
+<a href="/special_events/build-your-own-synth/">Build Your Own Synth</a>
+</body></html>
+"""
+
+BRAIN_DEAD_BOY_MEETS_GIRL_HTML = """
+<html><head><meta property="og:image" content="https://studios.wearebraindead.com/images/boy.jpg"></head>
+<body><h1>Boy Meets Girl / Funky Forest</h1><p>Fri, Sep 25, 2026</p><p>7:30 PM</p>
+<p>35mm double feature.</p><a href="https://tickets.example/boy-meets-girl">Tickets</a></body></html>
+"""
+
+BRAIN_DEAD_SPECIAL_SCREENING_HTML = """
+<html><body><h1>Night Patrol</h1><p>Special screening followed by a Q&amp;A.</p>
+<p>Fri, Sep 25, 2026</p><p>9:00 PM</p><a href="https://tickets.example/night-patrol">Tickets</a></body></html>
+"""
+
+BRAIN_DEAD_SPECIAL_WORKSHOP_HTML = """
+<html><body><h1>Build Your Own Synth</h1><p>Hands-on workshop for analog instruments.</p>
+<p>Fri, Sep 25, 2026</p><p>5:00 PM</p></body></html>
+"""
+
+BRAIN_DEAD_MATO_VENUE_HTML = """
+<html><body><h2>Upcoming Events</h2>
+<a href="/event/boy-meets-girl-funky-forest-25-sep-2026">Boy Meets Girl / Funky Forest Brain Dead Studios · $13 Film</a>
+<a href="/event/build-your-own-synth-workshop-25-sep-2026">Build Your Own Synth Workshop Brain Dead Studios Workshops</a>
+<h2>Past Events</h2>
+<a href="/event/past-film">Past Film Brain Dead Studios Film</a>
+</body></html>
+"""
+
+BRAIN_DEAD_MATO_BOY_MEETS_GIRL_HTML = """
+<html><body><h1>Boy Meets Girl / Funky Forest</h1><p>When</p><p>Friday, 25 September</p>
+<p>About</p><p>A double feature of Leos Carax's Boy Meets Girl and Funky Forest: The First Contact.</p>
+<h2>Related Events in Los Angeles</h2><p>Unrelated future screening</p></body></html>
+"""
+
 UCLA_SITEMAP_INDEX_XML = """
 <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <sitemap><loc>https://www.cinema.ucla.edu/events-sitemap.xml</loc></sitemap>
@@ -625,12 +691,89 @@ class ScraperTests(unittest.TestCase):
             **{url: "<urlset></urlset>" for url in scraper.UCLA_SITEMAP_URLS},
             seed_url: UCLA_SERIES_GRAPH_SEED_HTML,
             current_series_url: UCLA_SERIES_GRAPH_CURRENT_HTML,
-            event_url: UCLA_HTML.replace("Introducing Dorothy Dandridge", "October Film").replace("Dec 2, 2026", "Oct 17, 2026").replace("7:00 pm", "7:30 pm"),
+            # The event page's parsed time differs from the series-card time.
+            # They still name the same official event URL and must merge.
+            event_url: UCLA_HTML.replace("Introducing Dorothy Dandridge", "October Film").replace("Dec 2, 2026", "Oct 17, 2026"),
         }
         with patch.object(scraper, "UCLA_SERIES_SEED_URLS", (seed_url,)):
             result = scraper._scrape_ucla_film_archive(NOW, FakeFetcher(pages), force=True)
         self.assertEqual(result["source"]["status"], "verified")
         self.assertEqual([event["title"] for event in result["events"]], ["October Film"])
+        self.assertEqual(result["events"][0]["time"], "7:30 PM")
+
+    def test_brain_dead_programming_keeps_only_los_angeles_screenings(self):
+        entries = scraper.parse_brain_dead_programming(BRAIN_DEAD_PROGRAMMING_HTML, NOW)
+        self.assertEqual(
+            [entry["title"] for entry in entries],
+            [
+                "CHAT PILE PRESENTS: TEEN WITCH",
+                "ELEPHANT GYM: MORE REAL THAN DREAMS DOCUMENTARY",
+                "50/50 HORROR • SHORT FILM FESTIVAL",
+            ],
+        )
+        self.assertEqual(entries[0]["startAt"].isoformat(), "2026-10-01T19:00:00-07:00")
+        self.assertEqual(entries[0]["pageUrl"], "https://studios.wearebraindead.com/movies/chat-pile-presents-teen-witch/")
+        self.assertEqual(entries[1]["ticketUrl"], scraper.BRAIN_DEAD_COMING_SOON_URL)
+
+        result = scraper._scrape_brain_dead_studios(
+            NOW,
+            FakeFetcher({scraper.BRAIN_DEAD_PROGRAMMING_URL: BRAIN_DEAD_PROGRAMMING_HTML}),
+            force=True,
+        )
+        self.assertEqual(result["source"]["status"], "verified")
+        self.assertEqual(result["source"]["eventCount"], 3)
+        self.assertEqual({event["venue"] for event in result["events"]}, {"Brain Dead Studios"})
+
+    def test_brain_dead_official_movie_paths_bypass_the_title_filter(self):
+        entries = scraper.parse_brain_dead_programming(BRAIN_DEAD_LINKED_MOVIE_PROGRAMMING_HTML, NOW)
+        self.assertEqual([entry["title"] for entry in entries], ["BOY MEETS GIRL"])
+        self.assertEqual(entries[0]["pageUrl"], "https://studios.wearebraindead.com/movies/boy-meets-girl/")
+
+        pages = scraper.discover_brain_dead_detail_pages(BRAIN_DEAD_COMING_SOON_HTML)
+        self.assertEqual(
+            pages,
+            [
+                {"pageUrl": "https://studios.wearebraindead.com/movies/boy-meets-girl/", "kind": "movie"},
+                {"pageUrl": "https://studios.wearebraindead.com/special_events/night-patrol/", "kind": "special-event"},
+                {"pageUrl": "https://studios.wearebraindead.com/special_events/build-your-own-synth/", "kind": "special-event"},
+            ],
+        )
+
+        pages_by_url = {
+            scraper.BRAIN_DEAD_COMING_SOON_URL: BRAIN_DEAD_COMING_SOON_HTML,
+            scraper.BRAIN_DEAD_PROGRAMMING_URL: "<html></html>",
+            "https://studios.wearebraindead.com/movies/boy-meets-girl/": BRAIN_DEAD_BOY_MEETS_GIRL_HTML,
+            "https://studios.wearebraindead.com/special_events/night-patrol/": BRAIN_DEAD_SPECIAL_SCREENING_HTML,
+            "https://studios.wearebraindead.com/special_events/build-your-own-synth/": BRAIN_DEAD_SPECIAL_WORKSHOP_HTML,
+        }
+        result = scraper._scrape_brain_dead_studios(NOW, FakeFetcher(pages_by_url), force=True)
+        self.assertEqual(result["source"]["status"], "verified")
+        self.assertEqual(result["source"]["sourceMode"], "official-slate")
+        self.assertEqual(
+            {event["title"] for event in result["events"]},
+            {"Boy Meets Girl / Funky Forest", "Night Patrol"},
+        )
+        boy = next(event for event in result["events"] if event["title"] == "Boy Meets Girl / Funky Forest")
+        self.assertEqual(boy["time"], "7:30 PM")
+        self.assertEqual(boy["sourceStatus"], "verified-brain-dead-movie")
+
+    def test_brain_dead_uses_a_labeled_film_partner_fallback_when_the_slate_is_blocked(self):
+        boy_url = "https://ma.to/event/boy-meets-girl-funky-forest-25-sep-2026"
+        pages = {
+            scraper.BRAIN_DEAD_PROGRAMMING_URL: "<html></html>",
+            scraper.BRAIN_DEAD_MATO_VENUE_URL: BRAIN_DEAD_MATO_VENUE_HTML,
+            f"{scraper.BRAIN_DEAD_MATO_VENUE_URL}?page=2": "<html><h2>Upcoming Events</h2></html>",
+            boy_url: BRAIN_DEAD_MATO_BOY_MEETS_GIRL_HTML,
+        }
+        result = scraper._scrape_brain_dead_studios(NOW, FakeFetcher(pages), force=True)
+        self.assertEqual(result["source"]["status"], "verified")
+        self.assertEqual(result["source"]["sourceMode"], "partner-fallback")
+        self.assertEqual(result["source"]["eventCount"], 1)
+        event = result["events"][0]
+        self.assertEqual(event["title"], "Boy Meets Girl / Funky Forest")
+        self.assertEqual(event["time"], "Time TBA")
+        self.assertEqual(event["sourceStatus"], "partner-fallback")
+        self.assertEqual(event["sourceLabel"], "Partner listing · Mato / Brain Dead Studios")
 
     def test_ucla_sitemap_is_additive_when_the_index_has_a_stale_event_link(self):
         index_event_url = "https://www.cinema.ucla.edu/events/index-film-2026-10-01/"
@@ -737,7 +880,7 @@ class ScraperTests(unittest.TestCase):
         self.assertEqual(deduped[0]["time"], "7:30 PM")
 
     def test_new_sources_are_optional_and_registered(self):
-        for source_id in ("egyptian-theatre", "fine-arts-theatre", "filmforum", "old-town-music-hall", "ucla-film-archive"):
+        for source_id in ("egyptian-theatre", "fine-arts-theatre", "filmforum", "old-town-music-hall", "brain-dead-studios", "ucla-film-archive"):
             self.assertIn(source_id, scraper.SOURCE_REGISTRY)
             self.assertFalse(scraper.SOURCE_REGISTRY[source_id].get("required", True))
 

@@ -46,6 +46,7 @@ cannot block the verified feed. The current Los Angeles sources are:
 - [Fine Arts Theatre Beverly Hills Veezi sessions](https://ticketing.uswest.veezi.com/sessions/?siteToken=tez3prscsvfbagchhkxbevjwk8)
 - [Los Angeles Filmforum schedule](https://www.lafilmforum.org/schedule/)
 - [Old Town Music Hall](https://www.oldtownmusichall.org/home/)
+- [Brain Dead Studios programming](https://wearebraindead.com/pages/programming)
 - [UCLA Film & Television Archive events](https://www.cinema.ucla.edu/events/)
 
 Vidiots is traversed from its official homepage into the current upcoming-listing
@@ -152,7 +153,16 @@ follows the bounded official series-to-series graph surfaced by server-rendered
 series pages, whose dates and times remain available even when the broad
 calendar is JavaScript-only; only future pages with screening or film-program
 markers are retained.
-All four sources are optional so a source-specific outage cannot invalidate the
+Brain Dead Studios traverses the official [Coming Soon slate](https://studios.wearebraindead.com/coming-soon/)
+into every linked `/movies/` page, which Rerun treats as a screening regardless
+of the title text. Linked `/special_events/` pages require an explicit
+film/screening marker. The public Programming page provides first-party
+schedule fallback. If the Studio blocks plain HTTP access to the slate or a
+movie detail page, Rerun can fill only cards explicitly tagged Film from the
+[Mato Brain Dead venue calendar](https://ma.to/venue/braindeadstudiosfairfax);
+those cards are visibly labeled as partner listings and link to Mato rather
+than being represented as official Studio records. All supplemental sources are
+optional so a source-specific outage cannot invalidate the
 complete feed from the existing required venues.
 
 Manual refreshes recheck the schedule/index pages while reusing detail pages
