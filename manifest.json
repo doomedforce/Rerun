@@ -8,13 +8,13 @@
   "theme_color": "#080807",
   "icons": [
     {
-      "src": "/app-icon.svg?v=20260922-launch",
+      "src": "/app-icon.svg?v=20261021-pages",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "/assets/rerun-mark.png?v=20260922-launch",
+      "src": "/assets/rerun-mark.png?v=20261021-pages",
       "sizes": "1024x1024",
       "type": "image/png",
       "purpose": "any maskable"

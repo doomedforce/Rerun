@@ -56,15 +56,15 @@ const browseDayWord = document.querySelector('#browse-day-word');
 function ensureLogoFallbacks() {
   document.querySelectorAll('img').forEach((image) => {
     const source = image.getAttribute('src') || '';
-    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20260922-launch';
-    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20260922-launch';
+    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20261021-pages';
+    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20261021-pages';
     image.addEventListener('error', () => {
       if (image.dataset.logoFallbackApplied) return;
       image.dataset.logoFallbackApplied = 'true';
       if (image.classList.contains('brand-logo') || image.closest('.hero-branding, .calendar-branding')) {
-        image.src = '/assets/rerun-logo.svg?v=20260922-launch';
+        image.src = '/assets/rerun-logo.svg?v=20261021-pages';
       } else if (image.closest('.footer-brand')) {
-        image.src = '/assets/rerun-mark.svg?v=20260922-launch';
+        image.src = '/assets/rerun-mark.svg?v=20261021-pages';
       }
     }, { once: true });
   });
@@ -106,12 +106,9 @@ function listingAction(item = {}) {
 }
 
 function screeningsApiPath() {
-  const params = new URLSearchParams({ city: state.city, limit: '500' });
-  // Browse only needs the selected day; calendar/saved views need the full
-  // upcoming catalog. Keeping this filter server-side makes the completed
-  // live response smaller and faster to render.
-  if (state.view === 'browse' && !['weekend', 'upcoming'].includes(state.dateFilter)) params.set('dateKey', state.selectedDate);
-  return apiUrl(`/api/screenings?${params.toString()}`);
+  // One request for the whole upcoming catalog (a static file on Cloudflare);
+  // day, weekend, and saved views all filter it in the browser.
+  return apiUrl(`/api/screenings?${new URLSearchParams({ city: state.city, limit: '500' })}`);
 }
 
 function setDataStatus(message, tone = 'default') {
@@ -123,8 +120,13 @@ function setDataStatus(message, tone = 'default') {
 function setLoadingState(message = 'Indexing official feeds…') {
   updateDayNavigator();
   if (grid) {
-    grid.replaceChildren();
-    grid.hidden = true;
+    grid.replaceChildren(...Array.from({ length: 6 }, () => {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'screening-card is-skeleton';
+      placeholder.setAttribute('aria-hidden', 'true');
+      return placeholder;
+    }));
+    grid.hidden = state.view === 'calendar';
   }
   if (calendarView) calendarView.hidden = true;
   if (calendarScreeningGrid) calendarScreeningGrid.replaceChildren();
@@ -415,9 +417,12 @@ function cardFor(item) {
   poster.style.setProperty('--poster-color', primary.color || '#a92f23');
   const posterImage = fragment.querySelector('.poster-image');
   if (primary.image) {
+    // The typographic title only shows on tiles without artwork.
+    poster.classList.add('has-image');
+    posterImage.addEventListener('load', () => posterImage.classList.add('is-loaded'));
+    posterImage.addEventListener('error', () => { poster.classList.remove('has-image'); posterImage.remove(); });
     posterImage.src = imageUrl(primary.image);
     posterImage.alt = primary.imageAlt || `${primary.title} film still`;
-    posterImage.addEventListener('error', () => posterImage.remove());
   } else {
     posterImage.remove();
   }
@@ -715,6 +720,10 @@ async function loadScreenings(forceRefresh = false) {
     setLoadingState('Open Rerun with the local server to load listings.');
     return false;
   }
+  if (screenings.length) {
+    render();
+    return true;
+  }
   window.clearTimeout(retryTimer);
   retryTimer = null;
   const requestId = ++apiRequestId;
@@ -853,5 +862,5 @@ const initialScreening = new URLSearchParams(location.search).get('screening');
 if (initialScreening) openDetails(initialScreening);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20260922-launch'));
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20261021-pages'));
 }

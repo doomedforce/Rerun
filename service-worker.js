@@ -1,5 +1,5 @@
-const CACHE_NAME = 'rerun-shell-v33';
-const SHELL = ['./', './index.html', './calendar.html', './styles.css?v=20260922-launch', './app.js?v=20260922-launch', './manifest.json?v=20260922-launch', './favicon.svg?v=20260922-launch', './app-icon.svg?v=20260922-launch', './assets/rerun-mark.png?v=20260922-launch', './assets/rerun-logo.png?v=20260922-launch'];
+const CACHE_NAME = 'rerun-shell-v34';
+const SHELL = ['./', './index.html', './calendar.html', './styles.css?v=20261021-pages', './app.js?v=20261021-pages', './manifest.json?v=20261021-pages', './favicon.svg?v=20261021-pages', './app-icon.svg?v=20261021-pages', './assets/rerun-mark.png?v=20261021-pages', './assets/rerun-logo.png?v=20261021-pages'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then(async (cache) => {
@@ -17,7 +17,7 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(event.request.url);
-  if (event.request.method !== 'GET' || requestUrl.origin !== self.location.origin || requestUrl.pathname.startsWith('/api/')) return;
+  if (event.request.method !== 'GET' || requestUrl.origin !== self.location.origin || requestUrl.pathname.startsWith('/api/') || requestUrl.pathname.startsWith('/img/')) return;
   event.respondWith(fetch(event.request).then((response) => {
     const copy = response.clone();
     caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
