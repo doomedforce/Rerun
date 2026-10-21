@@ -36,8 +36,13 @@ jobs:
           key: rerun-state-${{ github.run_id }}
           restore-keys: rerun-state-
 
+<<<<<<< HEAD
       - name: Create the state folder on the first run
         run: mkdir -p .rerun-state  # refresh.py builds everything from scratch
+=======
+      - name: Seed state on the first run
+        run: test -d .rerun-state || cp -r data .rerun-state
+>>>>>>> 4f753b99e914aeb3c8aaa0e2b7e0318296192e00
 
       - name: Refresh official sources and build the site
         id: build
