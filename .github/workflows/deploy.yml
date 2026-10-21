@@ -1,0 +1,72 @@
+name: Refresh listings and deploy
+
+on:
+  schedule:
+    - cron: "17 * * * *"  # hourly; avoids :00, when GitHub's scheduler is busiest
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: rerun-deploy
+  cancel-in-progress: false
+
+jobs:
+  refresh-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Listings, the scraper's page cache, mirrored posters, and Instagram
+      # state persist between runs here (Render used a persistent disk).
+      RERUN_DATA_DIR: ${{ github.workspace }}/.rerun-state
+      RERUN_INSTAGRAM_ACCESS_TOKEN: ${{ secrets.RERUN_INSTAGRAM_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --quiet pillow
+
+      - name: Restore state from the last run
+        uses: actions/cache/restore@v4
+        with:
+          path: .rerun-state
+          key: rerun-state-${{ github.run_id }}
+          restore-keys: rerun-state-
+
+      - name: Create the state folder on the first run
+        run: mkdir -p .rerun-state  # refresh.py builds everything from scratch
+
+      - name: Refresh official sources and build the site
+        id: build
+        run: python build_static.py
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          TMDB_READ_ACCESS_TOKEN: ${{ secrets.TMDB_READ_ACCESS_TOKEN }}
+
+      - name: Deploy to Cloudflare Pages
+        if: steps.build.outputs.deploy == 'true'
+        run: npx --yes wrangler@4 pages deploy public --project-name="${{ vars.CLOUDFLARE_PAGES_PROJECT || 'rerun' }}" --branch=main --commit-dirty=true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Record the successful deploy
+        if: steps.build.outputs.deploy == 'true'
+        run: mv .rerun-state/pending-deploy.json .rerun-state/last-deploy.json
+
+      - name: Post today's picks to Instagram
+        if: env.RERUN_INSTAGRAM_ACCESS_TOKEN != ''
+        run: python -c "import refresh_worker; refresh_worker.maybe_publish_instagram()"
+        env:
+          RERUN_PUBLIC_BASE_URL: https://1rerun.com
+          RERUN_INSTAGRAM_USER_ID: ${{ secrets.RERUN_INSTAGRAM_USER_ID }}
+
+      - name: Save state for the next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .rerun-state
+          key: rerun-state-${{ github.run_id }}
