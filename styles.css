@@ -160,21 +160,12 @@ button { -webkit-tap-highlight-color: transparent; }
   background: radial-gradient(circle, var(--gold) 0 2px, transparent 2.5px) 0 50% / 16px 10px repeat-x;
   opacity: .5;
 }
-.hero-topline { display: flex; justify-content: space-between; align-items: center; gap: 2rem; }
+.hero-topline { display: flex; justify-content: flex-end; align-items: center; gap: 2rem; }
 .eyebrow {
   font: 500 0.76rem var(--mono);
   text-transform: uppercase;
   letter-spacing: .1em;
   color: var(--paper-dim);
-}
-.live-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  background: var(--red);
-  border-radius: 50%;
-  margin-right: .55rem;
-  box-shadow: 0 0 0 5px rgba(230, 83, 52, .15), 0 0 20px rgba(230, 83, 52, .65);
 }
 .marquee-label { color: var(--gold); }
 .hero-main {
