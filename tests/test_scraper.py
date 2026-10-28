@@ -527,6 +527,45 @@ class ScreeningFormatTests(unittest.TestCase):
         self.assertEqual(fine_arts_program(blocks, datetime(2026, 11, 26, 19, 30, tzinfo=LA_TZ))["image"], "https://img1.wsimg.com/ip/Interstellar.jpg")
         self.assertEqual(fine_arts_program(blocks, datetime(2027, 1, 24, 14, 0, tzinfo=LA_TZ)), {})
 
+    def test_filmbot_film_page_gives_film_and_showtimes(self):
+        import json as _json
+        from scraper import filmbot_movie_urls, parse_filmbot_movie
+        home = '<a href="https://thefridacinema.org/movies/the-omen/">x</a><a href="https://thefridacinema.org/movies/the-omen/">y</a><a href="https://elsewhere.org/movies/nope/">z</a>'
+        self.assertEqual(filmbot_movie_urls(home, "https://thefridacinema.org/"), ["https://thefridacinema.org/movies/the-omen/"])
+        graph = {"@graph": [
+            {"@type": "MovieTheater", "name": "The Frida Cinema"},
+            {"@type": "Movie", "name": "The Omen", "dateCreated": "1976-06-25", "image": "https://s3.amazonaws.com/nightjarprod/content/uploads/sites/344/omen.jpg", "director": [{"@type": "Person", "name": "Richard Donner"}]},
+            {"@type": "ScreeningEvent", "startDate": "2026-10-28T17:00:00-07:00", "url": "https://thefridacinema.org/purchase/2064883/", "offers": [{"availability": "https://schema.org/SoldOut"}]},
+        ]}
+        movie, screenings = parse_filmbot_movie('<script type="application/ld+json">' + _json.dumps(graph) + '</script><script type="application/ld+json">{bad</script>')
+        self.assertEqual(movie["name"], "The Omen")
+        self.assertEqual([s["url"] for s in screenings], ["https://thefridacinema.org/purchase/2064883/"])
+
+    def test_only_films_from_venues_that_also_host_shows(self):
+        from scraper import is_film_listing
+        films = [("Hocus Pocus", "A spellbinding Halloween favorite."),
+                 ("The Rocky Horror Picture Show Featuring a Live Shadow Cast", "Come up to the lab."),
+                 ("Frozen", "Meet Anna & Elsa in person, then sing along to Disney's magical winter adventure."),
+                 ("Star Wars: The Force Awakens", "")]
+        shows = [("Closed for a private event", ""), ("Devotional - The Depeche Mode Experience", ""),
+                 ("DSB - The World's Greatest Journey Tribute Band", ""), ("Candlelight Newport Beach", "Candlelight concerts"),
+                 ("Paul Thorn Live", ""), ("Lissie", "The singer-songwriter returns."),
+                 ("The Hollywood Stones", "bring the look and sound of The Rolling Stones to the stage")]
+        self.assertTrue(all(is_film_listing(*film) for film in films))
+        self.assertFalse(any(is_film_listing(*show) for show in shows))
+
+    def test_lido_event_page(self):
+        from scraper import parse_lido_events
+        lido = ('<article class="eventlist-event eventlist-event--upcoming eventlist-event--hasimg"><a href="/events/hocus-pocus-102926">'
+                '<img data-src="https://images.squarespace-cdn.com/content/v1/66f4/hocus.jpg"></a>'
+                '<h1 class="eventlist-title"><a href="/events/hocus-pocus-102926" class="eventlist-title-link">Hocus Pocus</a></h1>'
+                '<a href="http://www.google.com/calendar/event?action=TEMPLATE&text=Hocus&dates=20261030T020000Z/20261030T033000Z">G</a>'
+                '<div class="eventlist-excerpt"><p>A Halloween favorite.</p></div></article>'
+                '<article class="eventlist-event eventlist-event--past"><a class="eventlist-title-link">Old</a></article>')
+        [event] = parse_lido_events(lido)
+        self.assertEqual((event["title"], event["startAt"].isoformat(), event["url"]),
+                         ("Hocus Pocus", "2026-10-30T02:00:00+00:00", "https://www.thelidotheater.com/events/hocus-pocus-102926"))
+
 
 class ScraperTests(unittest.TestCase):
     def test_academy_discovery_follows_filtered_calendar_pagination(self):

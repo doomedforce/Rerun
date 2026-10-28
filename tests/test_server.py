@@ -23,6 +23,7 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(server.image_url_allowed(server.urlparse(fine_arts)))
         self.assertFalse(server.image_url_allowed(server.urlparse("https://img1.wsimg.com/isteam/ip/someone-else/x.jpg")))
         self.assertFalse(server.image_url_allowed(server.urlparse(fine_arts.replace("/Batman.jpg", "/../someone-else/x.jpg"))))
+        self.assertTrue(server.image_url_allowed(server.urlparse("https://s3.amazonaws.com/nightjarprod/content/uploads/sites/344/2026/09/omen.jpg")))
 
     def test_optional_source_failure_does_not_block_verified_required_feed(self):
         sources = [

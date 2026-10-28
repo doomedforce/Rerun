@@ -8,6 +8,11 @@ let apiRequestId = 0;
 const storage = (() => {
   try { return window.localStorage; } catch (error) { return null; }
 })();
+// Off by default: Rerun is a Los Angeles guide; these venues are a drive away.
+const OC_VENUES = new Set(['The Frida Cinema', 'Lido Theater']);
+const storedShowOc = (() => {
+  try { return storage ? storage.getItem('rerun-show-oc') === '1' : false; } catch (error) { return false; }
+})();
 const storedSaved = (() => {
   try { return storage ? JSON.parse(storage.getItem('rerun-saved') || '[]') : []; } catch (error) { return []; }
 })();
@@ -21,8 +26,13 @@ const state = {
   view: isCalendarPage ? 'calendar' : 'browse',
   calendarMonth: null,
   calendarSelectedDate: '',
-  saved: new Set(Array.isArray(storedSaved) ? storedSaved : [])
+  saved: new Set(Array.isArray(storedSaved) ? storedSaved : []),
+  showOc: storedShowOc
 };
+
+function inRegion(item) {
+  return state.showOc || !OC_VENUES.has(item.venue);
+}
 
 const grid = document.querySelector('#screening-grid');
 const emptyState = document.querySelector('#empty-state');
@@ -56,15 +66,15 @@ const browseDayWord = document.querySelector('#browse-day-word');
 function ensureLogoFallbacks() {
   document.querySelectorAll('img').forEach((image) => {
     const source = image.getAttribute('src') || '';
-    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20261028-tidy';
-    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20261028-tidy';
+    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20261028-oc2';
+    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20261028-oc2';
     image.addEventListener('error', () => {
       if (image.dataset.logoFallbackApplied) return;
       image.dataset.logoFallbackApplied = 'true';
       if (image.classList.contains('brand-logo') || image.closest('.hero-branding, .calendar-branding')) {
-        image.src = '/assets/rerun-logo.svg?v=20261028-tidy';
+        image.src = '/assets/rerun-logo.svg?v=20261028-oc2';
       } else if (image.closest('.footer-brand')) {
-        image.src = '/assets/rerun-mark.svg?v=20261028-tidy';
+        image.src = '/assets/rerun-mark.svg?v=20261028-oc2';
       }
     }, { once: true });
   });
@@ -300,6 +310,7 @@ function calendarItems() {
   const query = state.query.trim().toLowerCase();
   return screenings
     .filter((item) => item.city === state.city)
+    .filter(inRegion)
     .filter((item) => !query || [item.title, item.director, item.venue, item.genre, item.format, item.notes, item.sourceName].some((field) => String(field || '').toLowerCase().includes(query)))
     .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
 }
@@ -400,6 +411,7 @@ function matchingScreenings() {
     .filter((item) => item.city === state.city)
     .filter((item) => state.view !== 'browse' || matchesDateFilter(item))
     .filter((item) => state.view !== 'saved' || state.saved.has(item.id))
+    .filter((item) => state.view === 'saved' || inRegion(item))
     .filter((item) => !query || [item.title, item.director, item.venue, item.genre, item.format, item.notes, item.sourceName].some((field) => String(field || '').toLowerCase().includes(query)))
     .sort((a, b) => {
       const aValue = a.startAt ? new Date(a.startAt).getTime() : timeValue(a.time);
@@ -507,7 +519,7 @@ function render() {
     if (emptyHeading) emptyHeading.textContent = 'No saved screenings found.';
     if (emptyMessage) emptyMessage.textContent = 'Use Save on any screening card to build your list.';
   }
-  if (resultCount) resultCount.textContent = `${groupedItems.length} film${groupedItems.length === 1 ? '' : 's'} · ${items.length} show${items.length === 1 ? '' : 's'} · ${cityLabel(state.city)}`;
+  if (resultCount) resultCount.textContent = `${groupedItems.length} film${groupedItems.length === 1 ? '' : 's'} · ${items.length} show${items.length === 1 ? '' : 's'} · ${cityLabel(state.city)}${state.showOc ? ' + Orange County' : ''}`;
   if (citySelect) citySelect.value = state.city;
   updateSavedCounts();
   if (calendarMode) renderCalendar(items);
@@ -734,6 +746,14 @@ async function loadScreenings(forceRefresh = false) {
 }
 
 document.addEventListener('click', (event) => {
+  const ocToggle = event.target.closest('.oc-toggle');
+  if (ocToggle) {
+    state.showOc = !state.showOc;
+    try { if (storage) storage.setItem('rerun-show-oc', state.showOc ? '1' : '0'); } catch (error) { /* private mode */ }
+    syncOcToggle();
+    render();
+    return;
+  }
   const dateFilter = event.target.closest('.date-filter');
   if (dateFilter) {
     selectDateFilter(dateFilter.dataset.dateFilter);
@@ -785,6 +805,14 @@ document.addEventListener('click', (event) => {
 if (citySelect) citySelect.addEventListener('change', (event) => { state.city = event.target.value; state.view = isCalendarPage ? 'calendar' : 'browse'; state.selectedDate = todayDateKey(); state.calendarMonth = null; state.calendarSelectedDate = state.selectedDate; loadScreenings(); });
 if (searchInput) searchInput.addEventListener('input', (event) => { state.query = event.target.value; render(); });
 if (sortSelect) sortSelect.addEventListener('change', (event) => { state.sortMode = event.target.value === 'venue' ? 'venue' : 'time'; render(); });
+function syncOcToggle() {
+  document.querySelectorAll('.oc-toggle').forEach((button) => {
+    button.setAttribute('aria-pressed', String(state.showOc));
+    button.classList.toggle('active', state.showOc);
+  });
+}
+syncOcToggle();
+
 if (dayPrev) dayPrev.addEventListener('click', () => shiftSelectedDate(-1));
 if (dayNext) dayNext.addEventListener('click', () => shiftSelectedDate(1));
 if (calendarPrev) calendarPrev.addEventListener('click', () => {
@@ -838,5 +866,5 @@ const initialScreening = new URLSearchParams(location.search).get('screening');
 if (initialScreening) openDetails(initialScreening);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20261028-tidy'));
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20261028-oc2'));
 }

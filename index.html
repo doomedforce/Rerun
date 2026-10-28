@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#080807" />
   <meta name="description" content="Rerun helps you find verified repertory film screenings in Los Angeles." />
   <meta name="robots" content="index,follow" />
-  <meta name="rerun-build" content="2026-10-28-tidy" />
+  <meta name="rerun-build" content="2026-10-28-oc2" />
   <title>Rerun — Find the next great screening.</title>
   <link rel="canonical" href="https://1rerun.com/" />
   <meta property="og:type" content="website" />
@@ -15,21 +15,21 @@
   <meta property="og:title" content="Rerun — Find the next great screening." />
   <meta property="og:description" content="Verified repertory film screenings across Los Angeles." />
   <meta property="og:url" content="https://1rerun.com/" />
-  <meta property="og:image" content="https://1rerun.com/assets/rerun-mark.png?v=20261028-tidy" />
+  <meta property="og:image" content="https://1rerun.com/assets/rerun-mark.png?v=20261028-oc2" />
   <meta property="og:image:alt" content="Rerun repertory film guide mark" />
   <meta name="twitter:card" content="summary" />
   <meta name="twitter:title" content="Rerun — Find the next great screening." />
   <meta name="twitter:description" content="Verified repertory film screenings across Los Angeles." />
-  <meta name="twitter:image" content="https://1rerun.com/assets/rerun-mark.png?v=20261028-tidy" />
-  <link rel="icon" href="/favicon.svg?v=20261028-tidy" type="image/svg+xml" />
-  <link rel="alternate icon" href="/assets/rerun-mark.png?v=20261028-tidy" type="image/png" />
-  <link rel="apple-touch-icon" href="/assets/rerun-mark.png?v=20261028-tidy" />
-  <link rel="manifest" href="/manifest.json?v=20261028-tidy" />
+  <meta name="twitter:image" content="https://1rerun.com/assets/rerun-mark.png?v=20261028-oc2" />
+  <link rel="icon" href="/favicon.svg?v=20261028-oc2" type="image/svg+xml" />
+  <link rel="alternate icon" href="/assets/rerun-mark.png?v=20261028-oc2" type="image/png" />
+  <link rel="apple-touch-icon" href="/assets/rerun-mark.png?v=20261028-oc2" />
+  <link rel="manifest" href="/manifest.json?v=20261028-oc2" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght,SOFT,WONK@9..144,400..700,0..100,0..1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261028-tidy" />
-  <script src="/app.js?v=20261028-tidy" defer></script>
+  <link rel="stylesheet" href="styles.css?v=20261028-oc2" />
+  <script src="/app.js?v=20261028-oc2" defer></script>
 </head>
 <body>
   <div class="grain" aria-hidden="true"></div>
@@ -69,7 +69,7 @@
         <label class="search-box"><span class="sr-only">Search films, directors, or venues</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg><input id="search-input" type="search" placeholder="Search films, directors, venues" autocomplete="off" /></label><label class="sort-control" for="sort-select"><span>Order by</span><select id="sort-select"><option value="time">Soonest showtime</option><option value="venue">Theatre</option></select></label>
         <div class="day-navigator" aria-label="Choose screening day"><button class="day-arrow" type="button" id="day-prev" aria-label="Previous day">←</button><div class="day-label"><span class="eyebrow" id="day-kicker">Today</span><strong id="day-label">Loading date</strong></div><button class="day-arrow" type="button" id="day-next" aria-label="Next day">→</button><a class="calendar-button" href="calendar.html">Calendar <span>↗</span></a></div>
       </div>
-      <div class="date-filters" role="group" aria-label="Quick date filters"><button class="date-filter active" type="button" data-date-filter="today" aria-pressed="true">Tonight</button><button class="date-filter" type="button" data-date-filter="tomorrow" aria-pressed="false">Tomorrow</button><button class="date-filter" type="button" data-date-filter="weekend" aria-pressed="false">This weekend</button><button class="date-filter" type="button" data-date-filter="upcoming" aria-pressed="false">All upcoming</button></div>
+      <div class="date-filters" role="group" aria-label="Quick date filters"><button class="date-filter active" type="button" data-date-filter="today" aria-pressed="true">Tonight</button><button class="date-filter" type="button" data-date-filter="tomorrow" aria-pressed="false">Tomorrow</button><button class="date-filter" type="button" data-date-filter="weekend" aria-pressed="false">This weekend</button><button class="date-filter" type="button" data-date-filter="upcoming" aria-pressed="false">All upcoming</button><button class="oc-toggle" type="button" aria-pressed="false" title="Adds The Frida Cinema (Santa Ana) and the Lido Theater (Newport Beach)">Show Orange County</button></div>
       <div class="listing-meta"><p id="result-count">0 screenings</p><div class="feed-health"><span class="data-status" id="data-status" role="status" aria-live="polite">Checking official listings…</span></div></div>
       <div class="screening-grid" id="screening-grid" aria-live="polite"></div>
       <div class="calendar-view" id="calendar-view" hidden>
@@ -87,7 +87,7 @@
 
     <section class="about" id="about" aria-labelledby="about-title">
       <div class="eyebrow">02 / About Rerun</div>
-      <div class="about-grid"><h2 id="about-title">A better way to<br><em>go see a movie.</em></h2><div><p class="about-lead">The films worth leaving the house for are often the hardest to find.</p><p>Rerun brings repertory programs, revival screenings, filmmaker series, and local cinema calendars into one calm, useful place. No endless venue tabs. No discovering the perfect screening after it already happened.</p><p class="image-note">Every listing links back to its source.</p><ul class="source-list" aria-label="Official screening sources"><li><a href="https://www.americancinematheque.com/now-showing/" target="_blank" rel="noopener noreferrer">American Cinematheque</a></li><li><a href="https://ticketing.uswest.veezi.com/sessions/?siteToken=fmtswb0qqbym3de6c4bbsqj89m" target="_blank" rel="noopener noreferrer">New Beverly Cinema</a></li><li><a href="https://www.vistatheaterhollywood.com/schedule/" target="_blank" rel="noopener noreferrer">Vista Theater Hollywood</a></li><li><a href="https://vidiotsfoundation.org/coming-soon/" target="_blank" rel="noopener noreferrer">Vidiots</a></li><li><a href="https://wearebraindead.com/pages/programming" target="_blank" rel="noopener noreferrer">Brain Dead Studios</a></li><li><a href="https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O" target="_blank" rel="noopener noreferrer">Academy Museum</a></li><li><a href="https://ticketing.uswest.veezi.com/sessions/?siteToken=tez3prscsvfbagchhkxbevjwk8" target="_blank" rel="noopener noreferrer">Fine Arts Theatre</a></li><li><a href="https://www.lafilmforum.org/schedule/" target="_blank" rel="noopener noreferrer">Los Angeles Filmforum</a></li><li><a href="https://www.oldtownmusichall.org/home/" target="_blank" rel="noopener noreferrer">Old Town Music Hall</a></li><li><a href="https://www.cinema.ucla.edu/events/" target="_blank" rel="noopener noreferrer">UCLA Film &amp; Television Archive</a></li></ul></div></div>
+      <div class="about-grid"><h2 id="about-title">A better way to<br><em>go see a movie.</em></h2><div><p class="about-lead">The films worth leaving the house for are often the hardest to find.</p><p>Rerun brings repertory programs, revival screenings, filmmaker series, and local cinema calendars into one calm, useful place. No endless venue tabs. No discovering the perfect screening after it already happened.</p><p class="image-note">Every listing links back to its source.</p><ul class="source-list" aria-label="Official screening sources"><li><a href="https://www.americancinematheque.com/now-showing/" target="_blank" rel="noopener noreferrer">American Cinematheque</a></li><li><a href="https://ticketing.uswest.veezi.com/sessions/?siteToken=fmtswb0qqbym3de6c4bbsqj89m" target="_blank" rel="noopener noreferrer">New Beverly Cinema</a></li><li><a href="https://www.vistatheaterhollywood.com/schedule/" target="_blank" rel="noopener noreferrer">Vista Theater Hollywood</a></li><li><a href="https://vidiotsfoundation.org/coming-soon/" target="_blank" rel="noopener noreferrer">Vidiots</a></li><li><a href="https://wearebraindead.com/pages/programming" target="_blank" rel="noopener noreferrer">Brain Dead Studios</a></li><li><a href="https://www.academymuseum.org/en/calendar?programTypes=16i3uOYQwism7sMDhIQr2O" target="_blank" rel="noopener noreferrer">Academy Museum</a></li><li><a href="https://ticketing.uswest.veezi.com/sessions/?siteToken=tez3prscsvfbagchhkxbevjwk8" target="_blank" rel="noopener noreferrer">Fine Arts Theatre</a></li><li><a href="https://www.lafilmforum.org/schedule/" target="_blank" rel="noopener noreferrer">Los Angeles Filmforum</a></li><li><a href="https://www.oldtownmusichall.org/home/" target="_blank" rel="noopener noreferrer">Old Town Music Hall</a></li><li><a href="https://www.cinema.ucla.edu/events/" target="_blank" rel="noopener noreferrer">UCLA Film &amp; Television Archive</a></li><li><a href="https://arttheatrelongbeach.org/" target="_blank" rel="noopener noreferrer">Art Theatre Long Beach</a></li><li><a href="https://thefridacinema.org/" target="_blank" rel="noopener noreferrer">The Frida Cinema</a></li><li><a href="https://www.thelidotheater.com/events" target="_blank" rel="noopener noreferrer">Lido Theater</a></li></ul></div></div>
       <p class="image-note tmdb-attribution">Fallback poster art is supplied by <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer">TMDB</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
     </section>
 

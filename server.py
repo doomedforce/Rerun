@@ -169,6 +169,7 @@ def refresh_authorized(headers):
 # Shared image CDNs are allowed only inside one venue's own folder (GoDaddy hosts every site on img1.wsimg.com).
 IMAGE_ALLOWED_PREFIXES = (
     ("img1.wsimg.com", "/isteam/ip/3e05aff7-963e-4511-aa20-622f621576d3/"),  # Fine Arts Theatre Beverly Hills
+    ("images.squarespace-cdn.com", "/content/v1/66f48f2b9c7d0e62b4ecfddb/"),  # Lido Theater
 )
 
 

@@ -255,8 +255,9 @@ button { -webkit-tap-highlight-color: transparent; }
 .calendar-button { padding: .65rem .75rem; font: 500 0.7rem var(--mono); text-transform: uppercase; white-space: nowrap; }
 .calendar-button span { color: var(--gold); margin-left: .35rem; }
 .date-filters { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 1.5rem; }
-.date-filter { border: 1px solid var(--line); border-radius: 2rem; background: transparent; padding: .55rem .8rem; cursor: pointer; font: 400 0.71rem var(--mono); white-space: nowrap; color: var(--paper-dim); }
-.date-filter:hover, .date-filter.active { background: var(--paper); color: var(--night); border-color: var(--paper); }
+.date-filters .oc-toggle { margin-left: auto; }
+.date-filter, .oc-toggle { border: 1px solid var(--line); border-radius: 2rem; background: transparent; padding: .55rem .8rem; cursor: pointer; font: 400 0.71rem var(--mono); white-space: nowrap; color: var(--paper-dim); }
+.date-filter:hover, .date-filter.active, .oc-toggle:hover, .oc-toggle.active { background: var(--paper); color: var(--night); border-color: var(--paper); }
 .listing-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; gap: 1rem; }
 .listing-meta p, .sort-button, .data-status { font: 400 0.7rem var(--mono); text-transform: uppercase; margin: 0; color: var(--smoke); }
 .data-status { color: var(--gold); }

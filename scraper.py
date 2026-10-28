@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import gzip
 from html import unescape
+import functools
 import json
 import os
 import re
@@ -267,6 +268,27 @@ SOURCE_REGISTRY = {
         "adapter": "fine_arts_theatre",
         "required": False,
     },
+    "frida-cinema": {
+        "name": "The Frida Cinema",
+        "city": "los-angeles",
+        "url": "https://thefridacinema.org/",
+        "adapter": "filmbot",
+        "required": False,
+    },
+    "art-theatre-long-beach": {
+        "name": "Art Theatre Long Beach",
+        "city": "los-angeles",
+        "url": "https://arttheatrelongbeach.org/",
+        "adapter": "filmbot",
+        "required": False,
+    },
+    "lido-theater": {
+        "name": "Lido Theater",
+        "city": "los-angeles",
+        "url": "https://www.thelidotheater.com/events",
+        "adapter": "lido_theater",
+        "required": False,
+    },
     "filmforum": {
         "name": "Los Angeles Filmforum",
         "city": "los-angeles",
@@ -386,6 +408,21 @@ VENUE_CATALOG = {
         "name": "Academy Museum of Motion Pictures",
         "neighborhood": "Mid-Wilshire",
         "address": "6067 Wilshire Boulevard, Los Angeles, CA 90036",
+    },
+    "frida cinema": {
+        "name": "The Frida Cinema",
+        "neighborhood": "Orange County",
+        "address": "305 E. 4th Street Suite 100, Santa Ana, CA 92701",
+    },
+    "lido theater": {
+        "name": "Lido Theater",
+        "neighborhood": "Orange County",
+        "address": "3459 Via Lido, Newport Beach, CA 92663",
+    },
+    "art theatre long beach": {
+        "name": "Art Theatre Long Beach",
+        "neighborhood": "Long Beach",
+        "address": "2025 E 4th St., Long Beach, CA 90814",
     },
     "fine arts theatre": {
         "name": "Fine Arts Theatre Beverly Hills",
@@ -5904,6 +5941,186 @@ def _scrape_vidiots(current: datetime, fetcher: CachedFetcher, force: bool) -> d
     return {"events": events, "source": source, "errors": errors[:5]}
 
 
+# The Lido also hosts concerts, tribute acts and private events; only films go on Rerun.
+NOT_A_FILM = re.compile(
+    r"\b(?:private event|tribute|concerts?|candlelight|acoustic|band|singer|songwriter|guitar(?:ist)?|album|duo|"
+    r"comedy night|stand-?up|one[- ]man|an evening with|opera|swing|jazz|veterans event|"
+    r"to the stage|on stage|performing|performs|live shows?)\b",
+    re.I,
+)
+# Checked in the title only: film blurbs say "experience", and "Live Shadow Cast" or "Live Score" is still a film.
+NOT_A_FILM_TITLE = re.compile(r"\bexperience\b|\blive\b(?!\s+(?:score|shadow|accompaniment))", re.I)
+
+
+def is_film_listing(title: str, blurb: str = "") -> bool:
+    return not NOT_A_FILM_TITLE.search(title) and not NOT_A_FILM.search(f"{title} {blurb}")
+
+
+LIDO_EVENTS_URL = "https://www.thelidotheater.com/events"  # robots.txt bars ?format=json, so read the HTML list
+
+
+def parse_lido_events(html: str) -> list[dict]:
+    """Upcoming events on the Lido's Squarespace events page (films and non-films alike)."""
+    events: list[dict] = []
+    for block in re.findall(r'<article class="eventlist-event eventlist-event--upcoming.*?</article>', html, re.S):
+        title = re.search(r'class="eventlist-title-link">(.*?)</a>', block, re.S)
+        start = re.search(r"dates=(\d{8}T\d{6}Z)", block)  # the Google Calendar link carries the exact UTC start
+        if not title or not start:
+            continue
+        link = re.search(r'href="(/events/[^"]+)"', block)
+        image = re.search(r'data-src="(https://images\.squarespace-cdn\.com/[^"]+)"', block)
+        blurb = re.search(r'class="eventlist-excerpt">(.*?)</div>', block, re.S)
+        events.append({
+            "title": normalize_space(unescape(re.sub(r"<[^>]+>", "", title.group(1)))),
+            "startAt": datetime.strptime(start.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc),
+            "url": urljoin(LIDO_EVENTS_URL, link.group(1)) if link else LIDO_EVENTS_URL,
+            "image": unescape(image.group(1)) if image else "",
+            "synopsis": normalize_space(unescape(re.sub(r"<[^>]+>", " ", blurb.group(1)))) if blurb else "",
+        })
+    return events
+
+
+def _scrape_lido(current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
+    started = time.monotonic()
+    checked_at = iso_utc()
+    errors: list[str] = []
+    events: list[dict] = []
+    skipped = 0
+    try:
+        html, checked_at, _ = fetcher.fetch(LIDO_EVENTS_URL, force=force)
+        listings = parse_lido_events(html)
+        if not listings:
+            errors.append("No upcoming events found on the events page")
+        for item in listings:
+            if item["startAt"] < current or not is_film_listing(item["title"], item["synopsis"]):
+                skipped += 1
+                continue
+            event = make_event(
+                source_id="lido-theater", source_name="Lido Theater", title=item["title"], start_at=item["startAt"],
+                now=current, page_url=item["url"], ticket_url=item["url"], venue="Lido Theater",
+                synopsis=item["synopsis"][:520], image=item["image"], source_page_url=LIDO_EVENTS_URL,
+            )
+            event["sourceLastChecked"] = checked_at
+            events.append(event)
+    except Exception as error:
+        errors.append(f"Lido Theater: {error}")
+    return _single_page_source("lido-theater", "Lido Theater", LIDO_EVENTS_URL, "lido_theater", started, checked_at, events, errors, skipped)
+
+
+def _single_page_source(source_id, name, url, adapter, started, checked_at, events, errors, skipped) -> dict:
+    """Source record for venues whose feed may legitimately hold no films this month."""
+    source = {
+        "id": source_id, "name": name, "city": "los-angeles", "url": url, "adapter": adapter, "required": False,
+        "lastChecked": checked_at, "status": "error" if errors else "verified", "eventCount": len(events),
+        "pagesChecked": 1, "durationMs": int((time.monotonic() - started) * 1000), "errors": errors[:5],
+        "warnings": [f"{skipped} past or non-film events left out"] if skipped else [],
+    }
+    return {"events": events, "source": source, "errors": errors[:5]}
+
+
+# Cinemas on Filmbot: each film page carries the film and every showtime as JSON-LD.
+FILMBOT_SITES = {
+    "frida-cinema": {"name": "The Frida Cinema", "home": "https://thefridacinema.org/"},
+    "art-theatre-long-beach": {"name": "Art Theatre Long Beach", "home": "https://arttheatrelongbeach.org/"},
+}
+FILMBOT_MAX_FILMS = 120
+# Both also run new releases; Rerun keeps films at least this many years old (unknown years are kept).
+FILMBOT_REPERTORY_YEARS = 2
+
+
+def filmbot_movie_urls(html: str, home: str) -> list[str]:
+    host = urlsplit(home).netloc
+    found = re.findall(r"https://[^\"'\s<>]+/movies/[a-z0-9-]+/", html)
+    return list(dict.fromkeys(url for url in found if urlsplit(url).netloc == host))
+
+
+def parse_filmbot_movie(html: str) -> tuple[dict, list[dict]]:
+    """A Filmbot film page's JSON-LD: the Movie, and its ScreeningEvents."""
+    nodes: list[dict] = []
+    for block in re.findall(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', html, re.S):
+        try:
+            data = json.loads(block)
+        except ValueError:
+            continue
+        found = data if isinstance(data, list) else data.get("@graph", [data]) if isinstance(data, dict) else []
+        nodes += [node for node in found if isinstance(node, dict)]
+    movie = next((node for node in nodes if node.get("@type") == "Movie"), {})
+    screenings = [node for node in nodes if node.get("@type") == "ScreeningEvent" and node.get("startDate")]
+    return movie, screenings
+
+
+def _scrape_filmbot(source_id: str, current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
+    site = FILMBOT_SITES[source_id]
+    started = time.monotonic()
+    checked_at = iso_utc()
+    errors: list[str] = []
+    warnings: list[str] = []
+    events: list[dict] = []
+    try:
+        urls: list[str] = []
+        for page in (site["home"], urljoin(site["home"], "coming-soon/")):
+            html, checked_at, _ = fetcher.fetch(page, force=force)
+            urls += filmbot_movie_urls(html, site["home"])
+        urls = list(dict.fromkeys(urls))[:FILMBOT_MAX_FILMS]
+        results = parallel_fetch(fetcher, urls, force=False, max_workers=12)
+        for url in urls:
+            result = results.get(url)
+            if isinstance(result, Exception):
+                warnings.append(f"{url}: {result}")
+                continue
+            if not result:
+                continue
+            movie, screenings = parse_filmbot_movie(result[0])
+            year = str(movie.get("dateCreated", ""))[:4]
+            if year.isdigit() and int(year) > current.year - FILMBOT_REPERTORY_YEARS:
+                continue  # a new release, not repertory
+            directors = movie.get("director") or []
+            director = ", ".join(person.get("name", "") for person in directors if isinstance(person, dict))
+            for screening in screenings:
+                start = datetime.fromisoformat(screening["startDate"])
+                if start < current:
+                    continue
+                sold_out = any("SoldOut" in str(offer.get("availability", "")) for offer in screening.get("offers") or [] if isinstance(offer, dict))
+                event = make_event(
+                    source_id=source_id,
+                    source_name=site["name"],
+                    title=unescape(movie.get("name") or screening.get("name", "").split(" - ")[0]),
+                    start_at=start,
+                    now=current,
+                    page_url=url,
+                    ticket_url=screening.get("url") or url,
+                    venue=site["name"],
+                    director=director,
+                    year=year if year.isdigit() else "",
+                    synopsis=unescape(str(movie.get("description", "")))[:520],
+                    notes="Sold out" if sold_out else "",
+                    image=movie.get("image", ""),
+                    source_page_url=url,
+                )
+                event["sourceLastChecked"] = result[1]
+                events.append(event)
+        if not urls:
+            errors.append("No films found on the home or coming-soon page")
+    except Exception as error:
+        errors.append(f"{site['name']}: {error}")
+    source = {
+        "id": source_id,
+        "name": site["name"],
+        "city": "los-angeles",
+        "url": site["home"],
+        "adapter": "filmbot",
+        "required": False,
+        "lastChecked": checked_at,
+        "status": "verified" if events and not errors else ("degraded" if events else "error"),
+        "eventCount": len(events),
+        "pagesChecked": 2,
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "errors": errors[:5],
+        "warnings": warnings[:5],
+    }
+    return {"events": events, "source": source, "errors": errors[:5]}
+
+
 def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | None = None, force: bool = False) -> dict:
     """Fetch all configured official LA sources concurrently and return one verified feed."""
 
@@ -5921,6 +6138,8 @@ def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | Non
         "old-town-music-hall": _scrape_old_town_music_hall,
         "brain-dead-studios": _scrape_brain_dead_studios,
         "ucla-film-archive": _scrape_ucla_film_archive,
+        **{source_id: functools.partial(_scrape_filmbot, source_id) for source_id in FILMBOT_SITES},
+        "lido-theater": _scrape_lido,
     }
     results: dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="rerun-source") as executor:
@@ -5944,6 +6163,8 @@ def scrape_los_angeles(now: datetime | None = None, fetcher: CachedFetcher | Non
                     "old-town-music-hall": "Old Town Music Hall",
                     "brain-dead-studios": "Brain Dead Studios",
                     "ucla-film-archive": "UCLA Film & Television Archive",
+                    **{source_id: site["name"] for source_id, site in FILMBOT_SITES.items()},
+                    "lido-theater": "Lido Theater",
                 }[source_id]
                 results[source_id] = {
                     "events": [],
