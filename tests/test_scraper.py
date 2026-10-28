@@ -495,7 +495,9 @@ class ScreeningFormatTests(unittest.TestCase):
         self.assertEqual(screening_format("", "Alien (4k) / Aliens 35mm", "Aero Theatre"), "4K / 35mm")
         self.assertEqual(screening_format("16mm", "Meshes of the Afternoon", "Vidiots"), "16mm")
         self.assertEqual(screening_format("", "Pulp Fiction", "New Beverly Cinema"), "35mm")
-        self.assertEqual(screening_format("", "Pulp Fiction", "Vidiots"), "Format not listed")
+        self.assertEqual(screening_format("", "Pulp Fiction", "Vidiots"), "DCP")
+        self.assertEqual(screening_format("16mm", "Meshes of the Afternoon", "Vidiots"), "16mm")
+        self.assertEqual(screening_format("", "Pulp Fiction", "Brain Dead Studios"), "Format not listed")
 
     def test_ticketing_titles_find_their_program_page(self):
         from scraper import match_key, program_details

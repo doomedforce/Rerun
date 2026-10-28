@@ -1960,8 +1960,8 @@ def credit_values(lines: list[str]) -> tuple[list[str], list[str], list[str]]:
 
 
 TITLE_FORMAT = re.compile(r"\b(70|35|16)\s?mm\b|\b(4K|DCP)\b", re.I)
-# The New Beverly projects nearly everything on film and its listings rarely say so.
-VENUE_DEFAULT_FORMAT = {"New Beverly Cinema": "35mm"}
+# Listings that rarely name a format: the New Beverly projects nearly everything on film, Vidiots mostly digital.
+VENUE_DEFAULT_FORMAT = {"New Beverly Cinema": "35mm", "Vidiots": "DCP"}
 
 
 def screening_format(format_name: str, title: str, venue: str) -> str:
