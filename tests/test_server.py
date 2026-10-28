@@ -19,6 +19,10 @@ class ServerTests(unittest.TestCase):
     def test_tmdb_image_host_is_approved_for_the_artwork_proxy(self):
         self.assertTrue(server.image_host_allowed("image.tmdb.org"))
         self.assertFalse(server.image_host_allowed("image.tmdb.org.example.test"))
+        fine_arts = "https://img1.wsimg.com/isteam/ip/3e05aff7-963e-4511-aa20-622f621576d3/Batman.jpg/:/rs=w:388"
+        self.assertTrue(server.image_url_allowed(server.urlparse(fine_arts)))
+        self.assertFalse(server.image_url_allowed(server.urlparse("https://img1.wsimg.com/isteam/ip/someone-else/x.jpg")))
+        self.assertFalse(server.image_url_allowed(server.urlparse(fine_arts.replace("/Batman.jpg", "/../someone-else/x.jpg"))))
 
     def test_optional_source_failure_does_not_block_verified_required_feed(self):
         sources = [

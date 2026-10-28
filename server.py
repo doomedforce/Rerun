@@ -166,6 +166,19 @@ def refresh_authorized(headers):
     return hmac.compare_digest(str(provided), REFRESH_TOKEN)
 
 
+# Shared image CDNs are allowed only inside one venue's own folder (GoDaddy hosts every site on img1.wsimg.com).
+IMAGE_ALLOWED_PREFIXES = (
+    ("img1.wsimg.com", "/isteam/ip/3e05aff7-963e-4511-aa20-622f621576d3/"),  # Fine Arts Theatre Beverly Hills
+)
+
+
+def image_url_allowed(parsed):
+    if image_host_allowed(parsed.hostname):
+        return True
+    host, path = str(parsed.hostname or "").lower(), parsed.path
+    return ".." not in path and any(host == allowed and path.startswith(prefix) for allowed, prefix in IMAGE_ALLOWED_PREFIXES)
+
+
 def image_host_allowed(hostname):
     host = str(hostname or "").lower().rstrip(".")
     return host in IMAGE_ALLOWED_HOSTS or any(host.endswith(f".{domain}") for domain in IMAGE_ALLOWED_HOSTS)
@@ -173,7 +186,7 @@ def image_host_allowed(hostname):
 
 def fetch_remote_image(image_url):
     parsed = urlparse(image_url)
-    if parsed.scheme != "https" or not parsed.hostname or not image_host_allowed(parsed.hostname):
+    if parsed.scheme != "https" or not parsed.hostname or not image_url_allowed(parsed):
         raise ValueError("Image source is not an approved official venue domain.")
     with IMAGE_CACHE_LOCK:
         cached = IMAGE_CACHE.get(image_url)
