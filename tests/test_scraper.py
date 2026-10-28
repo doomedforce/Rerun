@@ -487,6 +487,45 @@ class FakeTmdbClient:
         return self.matches.get((scraper.normalize_key(title), year))
 
 
+class ScreeningFormatTests(unittest.TestCase):
+    def test_format_comes_from_title_then_listing_then_venue(self):
+        from scraper import screening_format
+        self.assertEqual(screening_format("", "Once Upon a Time in... Hollywood (70mm)", "Vista Theater Hollywood"), "70mm")
+        self.assertEqual(screening_format("35mm / 70mm", "Lawrence of Arabia in 70 MM", "Vista Theater Hollywood"), "70mm")
+        self.assertEqual(screening_format("", "Alien (4k) / Aliens 35mm", "Aero Theatre"), "4K / 35mm")
+        self.assertEqual(screening_format("16mm", "Meshes of the Afternoon", "Vidiots"), "16mm")
+        self.assertEqual(screening_format("", "Pulp Fiction", "New Beverly Cinema"), "35mm")
+        self.assertEqual(screening_format("", "Pulp Fiction", "Vidiots"), "Format not listed")
+
+    def test_ticketing_titles_find_their_program_page(self):
+        from scraper import match_key, program_details
+        pages = {match_key("The Others"): {"image": "others.jpg", "ticketUrl": "bev/others", "year": "2001", "director": "Alejandro Amenabar"},
+                 match_key("Ken Russell's The Devils"): {"image": "devils.jpg", "year": "1971"}}
+        self.assertEqual(program_details(pages, "Ken Russell's The Devils 35mm")["year"], "1971")
+        bill = program_details(pages, "The Others/The Orphanage")
+        self.assertEqual(bill, {"image": "others.jpg", "ticketUrl": "bev/others"})  # the picture, not one film's credits
+        self.assertEqual(program_details(pages, "Pieces"), {})
+        self.assertEqual(match_key("KEN RUSSELL’S THE DEVILS"), match_key("Ken Russell's The Devils 35mm"))
+        self.assertEqual(match_key("Seven (Original 35mm Silver Retention Print)"), match_key("Seven"))
+
+    def test_fine_arts_site_gives_pictures_and_full_titles(self):
+        from datetime import datetime
+        from scraper import LA_TZ, fine_arts_program, parse_fine_arts_site
+        html = ('<img src="data:image/gif;base64,x" data-srclazy="//img1.wsimg.com/ip/Logo.png">'
+                '<p>70mm screenings every month.</p>'
+                '<img src="//img1.wsimg.com/ip/Interstellar.jpg"><p>2014 PG-13</p><p>Thursday, Nov 26th</p><p>at 2pm and 7:30pm</p>'
+                '<img src="//img1.wsimg.com/ip/Ghibli.jpg"><p>Saturday, Dec 19th</p><p>Ghibli Double Feature II</p>'
+                '<p>My Neighbor Totoro (Subtitled) 7:00 PM (86 minutes)</p><p>&amp;</p>'
+                '<p>Grave of the Fireflies (Subtitled)&nbsp; 9:15 PM (89 minutes)</p>')
+        blocks = parse_fine_arts_site(html)
+        self.assertEqual([b["image"] for b in blocks], ["https://img1.wsimg.com/ip/Interstellar.jpg", "https://img1.wsimg.com/ip/Ghibli.jpg"])
+        self.assertEqual(blocks[0]["films"], {})  # "at 2pm and 7:30pm" is not a film
+        bill = fine_arts_program(blocks, datetime(2026, 12, 19, 19, 0, tzinfo=LA_TZ))
+        self.assertEqual(bill["bill"], "My Neighbor Totoro / Grave of the Fireflies")
+        self.assertEqual(fine_arts_program(blocks, datetime(2026, 11, 26, 19, 30, tzinfo=LA_TZ))["image"], "https://img1.wsimg.com/ip/Interstellar.jpg")
+        self.assertEqual(fine_arts_program(blocks, datetime(2027, 1, 24, 14, 0, tzinfo=LA_TZ)), {})
+
+
 class ScraperTests(unittest.TestCase):
     def test_academy_discovery_follows_filtered_calendar_pagination(self):
         self.assertEqual(

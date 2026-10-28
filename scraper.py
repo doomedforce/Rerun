@@ -1959,6 +1959,43 @@ def credit_values(lines: list[str]) -> tuple[list[str], list[str], list[str]]:
     return years, directors, formats
 
 
+TITLE_FORMAT = re.compile(r"\b(70|35|16)\s?mm\b|\b(4K|DCP)\b", re.I)
+# The New Beverly projects nearly everything on film and its listings rarely say so.
+VENUE_DEFAULT_FORMAT = {"New Beverly Cinema": "35mm"}
+
+
+def screening_format(format_name: str, title: str, venue: str) -> str:
+    """A format named in this screening's own title wins; then the listing's; then the venue's usual one."""
+    found = list(dict.fromkeys(f"{m.group(1)}mm" if m.group(1) else m.group(2).upper() for m in TITLE_FORMAT.finditer(title)))
+    return " / ".join(found) or normalize_space(format_name) or VENUE_DEFAULT_FORMAT.get(venue, "") or "Format not listed"
+
+
+FORMAT_WORDS = re.compile(r"\b(?:in\s+)?(?:70|35|16)\s?mm\b|\b(?:4K|DCP)\b", re.I)
+
+
+def match_key(title: object) -> str:
+    """Key for matching a ticketing title to its program page: notes in parentheses, format words,
+    apostrophes (straight or curly) and other punctuation dropped."""
+    text = re.sub(r"\([^)]*\)", " ", str(title or ""))
+    return screening_title_key(FORMAT_WORDS.sub(" ", re.sub(r"['’]", "", text)))
+
+
+def program_details(details_by_key: dict, title: str) -> dict:
+    """Program-page details for a screening title.
+
+    Ticketing lists a double bill as one title ("The Others/The Orphanage") while the program page lists
+    each film, so a bill borrows only its program's picture and ticket link, never one film's year or director.
+    """
+    found = details_by_key.get(match_key(title))
+    if found:
+        return found
+    for part in re.split(r"\s*/\s*", title):
+        found = details_by_key.get(match_key(part))
+        if found:
+            return {key: found[key] for key in ("image", "ticketUrl") if found.get(key)}
+    return {}
+
+
 def make_event(
     *,
     source_id: str,
@@ -1984,7 +2021,7 @@ def make_event(
     local_start = as_la(start_at)
     clean_title = normalize_space(title)
     event_id = f"{source_id}-{slugify(clean_title)}-{slugify(venue_data['name'])}-{local_start.strftime('%Y%m%d-%H%M')}"
-    clean_synopsis = synopsis or f"Official listing from {source_name}. Check the venue page for current ticket availability."
+    clean_synopsis = normalize_space(synopsis)
     genre = infer_genre(clean_title, notes, clean_synopsis, source_name)
     if local_start.hour >= 22 and genre == "Repertory":
         genre = "Midnight"
@@ -1994,7 +2031,7 @@ def make_event(
         "title": clean_title,
         "director": normalize_space(director) or "Not listed",
         "year": normalize_space(year) or "—",
-        "format": normalize_space(format_name) or "Format not listed",
+        "format": screening_format(format_name, clean_title, venue_data["name"]),
         "venue": venue_data["name"],
         "neighborhood": venue_data["neighborhood"],
         "address": venue_data["address"],
@@ -4901,6 +4938,57 @@ def _scrape_egyptian_theatre(current: datetime, fetcher: CachedFetcher, force: b
     return {"events": events, "source": source, "errors": errors[:5]}
 
 
+FINE_ARTS_SITE_URL = "https://fineartstheatrebh.com/"
+FINE_ARTS_DATE_RE = re.compile(rf"\b({MONTH_PATTERN_SHORT})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?\b", re.I)
+FINE_ARTS_FILM_RE = re.compile(r"^(.+?)\s+(\d{1,2}):(\d{2})\s*([AP]M)\b", re.I)
+
+
+def parse_fine_arts_site(html: str) -> list[dict]:
+    """The theatre's own page: each program is one image followed by its dates and, for series, each film's start time.
+
+    Returns [{"image": url, "dates": {(month, day)}, "films": {(month, day, "7:00 PM"): full title}}].
+    """
+    text = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", "", html, flags=re.S | re.I)
+    blocks: list[dict] = []
+    day: tuple[int, int] | None = None
+    for match in re.finditer(r"<img\b[^>]*>|>([^<]+)<", text):
+        if match.group(1) is None:
+            sources = re.findall(r'(?:data-srclazy|data-src|src)="([^"]+)"', match.group(0))
+            src = next((value for value in sources if not value.startswith("data:")), "")
+            if src:
+                blocks.append({"image": urljoin("https:", unescape(src)), "dates": set(), "films": {}})
+            continue
+        if not blocks:
+            continue
+        line = normalize_space(unescape(match.group(1)))
+        dated = FINE_ARTS_DATE_RE.search(line)
+        if dated:
+            day = (MONTHS[dated.group(1)[:3].lower()], int(dated.group(2)))
+            blocks[-1]["dates"].add(day)
+            continue  # "Sunday, Nov 8th at 2:00PM" is a date line, not a film
+        film = FINE_ARTS_FILM_RE.match(line)
+        if film and day and day in blocks[-1]["dates"] and not re.match(r"(?:at|and|&)\b", film.group(1), re.I):
+            title = re.sub(r"\s*\((?:subtitled|dubbed)\)\s*$", "", film.group(1), flags=re.I).strip(" &")
+            blocks[-1]["films"][(*day, f"{int(film.group(2))}:{film.group(3)} {film.group(4).upper()}")] = title
+    return [block for block in blocks if block["dates"]]
+
+
+def fine_arts_program(blocks: list[dict], start_at: datetime) -> dict:
+    """The site program for a Veezi session, matched by date; time picks the film when a date has several.
+
+    "bill" is every film the program shows that day, for Veezi's one-session double features.
+    """
+    local = as_la(start_at)
+    key = (local.month, local.day, display_time(local))
+    candidates = [block for block in blocks if key[:2] in block["dates"]]
+    timed = [block for block in candidates if key in block["films"]]
+    block = timed[0] if timed else candidates[0] if len(candidates) == 1 else None  # two programs, no time: don't guess
+    if not block:
+        return {}
+    bill = " / ".join(title for (month, day, _), title in block["films"].items() if (month, day) == key[:2])
+    return {"image": block["image"], "title": block["films"].get(key, ""), "bill": bill}
+
+
 def _scrape_fine_arts(current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
     started = time.monotonic()
     checked_at = iso_utc()
@@ -4912,11 +5000,19 @@ def _scrape_fine_arts(current: datetime, fetcher: CachedFetcher, force: bool) ->
         entries = parse_fine_arts_sessions(html, current)
         if not entries:
             errors.append("Veezi sessions: no upcoming screenings discovered")
+        programs: list[dict] = []
+        try:  # pictures and full titles; Veezi has neither and cuts long titles short
+            site_html, _, _ = fetcher.fetch(FINE_ARTS_SITE_URL, force=False)
+            programs = parse_fine_arts_site(site_html)
+        except Exception as error:
+            warnings.append(f"{FINE_ARTS_SITE_URL}: {error}")
         for entry in entries:
+            program = fine_arts_program(programs, entry["startAt"])
             event = make_event(
                 source_id="fine-arts-theatre",
                 source_name="Fine Arts Theatre Beverly Hills",
-                title=entry["title"],
+                title=(program.get("bill") if "/" in entry["title"] else program.get("title")) or entry["title"],
+                image=program.get("image", ""),
                 start_at=entry["startAt"],
                 now=current,
                 page_url=FINE_ARTS_SESSIONS_URL,
@@ -5485,10 +5581,10 @@ def _scrape_new_beverly(current: datetime, fetcher: CachedFetcher, force: bool) 
             for film in details.get("films", []):
                 title = film.get("title")
                 if title:
-                    details_by_title[normalize_key(title)] = {**details, **film}
+                    details_by_title[match_key(title)] = {**details, **film}
 
         for entry in session_entries:
-            details = details_by_title.get(normalize_key(entry["title"]), {})
+            details = program_details(details_by_title, entry["title"])
             fallback_entry = source_mode == "official-schedule-fallback"
             event_page_url = entry.get("pageUrl") if fallback_entry else NEW_BEV_SESSIONS_URL
             source_page_url = NEW_BEV_SCHEDULE_URL if fallback_entry else NEW_BEV_SESSIONS_URL
@@ -5561,6 +5657,11 @@ def _scrape_vista(current: datetime, fetcher: CachedFetcher, force: bool) -> dic
         # a Vista movie page is missing, blocked, or changes its markup again.
         titles = list(dict.fromkeys(entry["title"] for entry in session_entries))
         movie_urls = [urljoin(VISTA_HOME_URL, f"movies/{slugify(title)}/") for title in titles[:DEFAULT_MAX_DETAIL_EVENTS]]
+        try:  # the schedule links the real pages; guessed slugs miss titles like "Ken Russell's The Devils 35mm"
+            schedule_html, _, _ = fetcher.fetch(VISTA_SCHEDULE_URL, force=False)
+            movie_urls = list(dict.fromkeys(discover_vista_movie_urls(schedule_html) + movie_urls))
+        except Exception as error:
+            warnings.append(f"{VISTA_SCHEDULE_URL}: {error}")
         detail_results = parallel_fetch(fetcher, movie_urls, force=False, max_workers=12)
         for page_url in movie_urls:
             result = detail_results.get(page_url)
@@ -5578,12 +5679,12 @@ def _scrape_vista(current: datetime, fetcher: CachedFetcher, force: bool) -> dic
             details["checkedAt"] = page_checked_at
             detail_cache[page_url] = details
         details_by_title = {
-            normalize_key(details.get("title")): details
+            match_key(details.get("title")): details
             for details in detail_cache.values()
             if details.get("title")
         }
         for entry in session_entries:
-            details = details_by_title.get(normalize_key(entry["title"]), {})
+            details = program_details(details_by_title, entry["title"])
             event = make_event(
                 source_id="vista-theater",
                 source_name="Vista Theater Hollywood",
@@ -5595,7 +5696,7 @@ def _scrape_vista(current: datetime, fetcher: CachedFetcher, force: bool) -> dic
                 venue="Vista Theater Hollywood",
                 director=details.get("director", ""),
                 year=details.get("year", ""),
-                format_name=entry.get("format") or details.get("format") or "35mm / 70mm",
+                format_name=entry.get("format") or details.get("format") or "35mm",
                 synopsis=details.get("synopsis", ""),
                 notes=" · ".join(filter(None, (details.get("notes", ""), entry.get("notes", "")))),
                 image=details.get("image", ""),

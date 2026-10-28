@@ -56,21 +56,28 @@ const browseDayWord = document.querySelector('#browse-day-word');
 function ensureLogoFallbacks() {
   document.querySelectorAll('img').forEach((image) => {
     const source = image.getAttribute('src') || '';
-    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20261021-pages';
-    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20261021-pages';
+    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20261027-clean';
+    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20261027-clean';
     image.addEventListener('error', () => {
       if (image.dataset.logoFallbackApplied) return;
       image.dataset.logoFallbackApplied = 'true';
       if (image.classList.contains('brand-logo') || image.closest('.hero-branding, .calendar-branding')) {
-        image.src = '/assets/rerun-logo.svg?v=20261021-pages';
+        image.src = '/assets/rerun-logo.svg?v=20261027-clean';
       } else if (image.closest('.footer-brand')) {
-        image.src = '/assets/rerun-mark.svg?v=20261021-pages';
+        image.src = '/assets/rerun-mark.svg?v=20261027-clean';
       }
     }, { once: true });
   });
 }
 
 ensureLogoFallbacks();
+
+// The feed fills gaps with placeholders ("Not listed", "—"); show nothing instead.
+const PLACEHOLDERS = new Set(['', '—', 'not listed', 'director not listed', 'format not listed']);
+function known(value) {
+  const text = String(value || '').trim();
+  return PLACEHOLDERS.has(text.toLowerCase()) ? '' : text;
+}
 
 function apiUrl(pathname) {
   return `${API_BASE}${pathname}`;
@@ -426,18 +433,20 @@ function cardFor(item) {
   } else {
     posterImage.remove();
   }
-  fragment.querySelector('.poster-kicker').textContent = `${primary.year || '—'} / ${primary.genre || 'Repertory'}`;
+  fragment.querySelector('.poster-kicker').textContent = [known(primary.year), primary.genre || 'Repertory'].filter(Boolean).join(' / ');
   const titleText = primary.title || 'Untitled screening';
   const posterTitle = fragment.querySelector('.poster-title');
   posterTitle.textContent = titleText;
   posterTitle.dataset.id = primary.id;
   posterTitle.setAttribute('aria-label', `View details for ${titleText}`);
-  fragment.querySelector('.poster-format').textContent = primary.format || 'Format not listed';
+  fragment.querySelector('.poster-format').textContent = known(primary.format);
   const filmTitle = fragment.querySelector('.film-title');
   filmTitle.textContent = titleText;
   filmTitle.dataset.id = primary.id;
   filmTitle.setAttribute('aria-label', `View details for ${titleText}`);
-  fragment.querySelector('.film-meta').textContent = `${primary.director || 'Director not listed'} · ${primary.year || '—'}`;
+  const meta = fragment.querySelector('.film-meta');
+  meta.textContent = [known(primary.director), known(primary.year)].filter(Boolean).join(' · ');
+  meta.hidden = !meta.textContent;
   fragment.querySelector('.distance').textContent = primary.neighborhood || primary.distance || 'Los Angeles';
   fragment.querySelector('.showing-date').textContent = primary.date || 'Date TBA';
   const showingTime = fragment.querySelector('.showing-time');
@@ -453,12 +462,6 @@ function cardFor(item) {
     return time;
   }));
   fragment.querySelector('.showing-venue').textContent = primary.venue || 'Venue TBA';
-  const sourceLabel = fragment.querySelector('.source-label');
-  if (sourceLabel) {
-    sourceLabel.textContent = primary.sourceLabel || (primary.sourceName ? `Official · ${primary.sourceName}` : 'Source not listed');
-    sourceLabel.title = `${primary.sourceUrl || ''}${primary.sourceLastChecked ? ` · checked ${primary.sourceLastChecked}` : ''}`;
-    sourceLabel.href = primary.sourceUrl || primary.ticketUrl || '#';
-  }
   const saved = showings.some((showing) => state.saved.has(showing.id));
   fragment.querySelectorAll('.save-button, .save-screening-button').forEach((saveButton) => {
     saveButton.dataset.id = primary.id;
@@ -555,7 +558,7 @@ function openDetails(id) {
   const sourceActionLabel = item.sourceStatus === 'partner-fallback' ? 'Open partner listing' : `Verify on ${sourceName}`;
   const ticketAction = listingAction(item);
   const ticketActionLabel = ticketAction.label;
-  dialogContent.innerHTML = `<div class="dialog-body"><div class="dialog-poster" style="--poster-color:${escapeHtml(item.color || '#a92f23')}">${image}<span class="eyebrow">${escapeHtml(item.year || '—')} / ${escapeHtml(item.genre || 'Repertory')}</span><strong>${escapeHtml(item.title || 'Untitled screening')}</strong><span class="eyebrow">${escapeHtml(item.format || 'Format not listed')}</span></div><div class="dialog-info"><span class="eyebrow">Screening details</span><h2>${escapeHtml(item.title || 'Untitled screening')}</h2><p>${escapeHtml(item.synopsis || 'Check the official program page for the latest details.')}</p><div class="detail-row"><span>When</span><strong>${escapeHtml(item.date || 'Date TBA')} · ${escapeHtml(whenLabel)}</strong></div><div class="detail-row"><span>Where</span><strong>${escapeHtml(item.venue || 'Venue TBA')} · ${escapeHtml(item.neighborhood || item.distance || 'Los Angeles')}</strong></div>${addressRow}<div class="detail-row"><span>Director</span><strong>${escapeHtml(item.director || 'Not listed')}</strong></div>${notesRow}${checkedRow}<a class="dialog-ticket" href="${escapeHtml(item.ticketUrl || sourceUrl)}" target="_blank" rel="noopener noreferrer">${ticketActionLabel} ↗</a><a class="dialog-source" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(sourceActionLabel)} ↗</a><div class="dialog-actions"><button class="dialog-calendar" type="button" data-id="${escapeHtml(item.id)}">Add to calendar ↓</button><button class="dialog-share" type="button" data-id="${escapeHtml(item.id)}">Share screening ↗</button></div></div></div>`;
+  dialogContent.innerHTML = `<div class="dialog-body"><div class="dialog-poster" style="--poster-color:${escapeHtml(item.color || '#a92f23')}">${image}<span class="eyebrow">${escapeHtml([known(item.year), item.genre || 'Repertory'].filter(Boolean).join(' / '))}</span><strong>${escapeHtml(item.title || 'Untitled screening')}</strong>${known(item.format) ? `<span class="eyebrow">${escapeHtml(known(item.format))}</span>` : ''}</div><div class="dialog-info"><span class="eyebrow">Screening details</span><h2>${escapeHtml(item.title || 'Untitled screening')}</h2>${known(item.synopsis) ? `<p>${escapeHtml(item.synopsis)}</p>` : ''}<div class="detail-row"><span>When</span><strong>${escapeHtml(item.date || 'Date TBA')} · ${escapeHtml(whenLabel)}</strong></div><div class="detail-row"><span>Where</span><strong>${escapeHtml(item.venue || 'Venue TBA')} · ${escapeHtml(item.neighborhood || item.distance || 'Los Angeles')}</strong></div>${addressRow}${known(item.director) ? `<div class="detail-row"><span>Director</span><strong>${escapeHtml(item.director)}</strong></div>` : ''}${notesRow}${checkedRow}<a class="dialog-ticket" href="${escapeHtml(item.ticketUrl || sourceUrl)}" target="_blank" rel="noopener noreferrer">${ticketActionLabel} ↗</a><a class="dialog-source" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(sourceActionLabel)} ↗</a><div class="dialog-actions"><button class="dialog-calendar" type="button" data-id="${escapeHtml(item.id)}">Add to calendar ↓</button><button class="dialog-share" type="button" data-id="${escapeHtml(item.id)}">Share screening ↗</button></div></div></div>`;
   const dialogImage = dialogContent.querySelector('.dialog-poster-image');
   if (dialogImage) dialogImage.addEventListener('error', () => dialogImage.remove());
   dialog.showModal();
@@ -659,35 +662,13 @@ function formatCheckedAt(value) {
 }
 
 function feedStatus(meta = {}) {
-  const sourceCount = meta.sourceCount || meta.sources?.length || 0;
-  const requiredCount = meta.requiredSourceCount || meta.sources?.filter((source) => source.required !== false).length || sourceCount;
-  const optionalUnavailable = (meta.sources || [])
-    .filter((source) => source.required === false && source.status !== 'verified')
-    .map((source) => source.name)
-    .filter(Boolean);
-  const fallbackSources = (meta.sources || [])
-    .filter((source) => String(source.sourceMode || '').includes('fallback'))
-    .map((source) => source.name)
-    .filter(Boolean);
-  const sourceNotes = [
-    optionalUnavailable.length ? `${optionalUnavailable.join(', ')} unavailable` : '',
-    fallbackSources.length ? `${fallbackSources.join(', ')} fallback` : '',
-  ].filter(Boolean);
-  const optionalNote = sourceNotes.length ? ` · ${sourceNotes.join(' · ')}` : '';
   const checked = formatCheckedAt(meta.lastRefresh);
   const lastVerified = formatCheckedAt(meta.lastVerifiedAt);
-  const requiredUnavailable = (meta.sources || [])
-    .filter((source) => source.required !== false && source.status !== 'verified')
-    .map((source) => source.name)
-    .filter(Boolean);
-  if (meta.servingLastVerifiedSnapshot) {
-    const refreshNote = requiredUnavailable.length ? ` · refreshing ${requiredUnavailable.join(', ')}` : ' · refreshing official sources';
-    return `Showing last verified index${lastVerified ? ` · verified ${lastVerified}` : ''}${refreshNote}`;
-  }
-  if (meta.refreshStatus === 'ok' && !meta.stale) return `Verified feed · ${requiredCount} required sources${optionalNote}${checked ? ` · ${checked}` : ''}`;
-  if (meta.refreshStatus === 'degraded') return `Partial feed · ${sourceCount} sources${checked ? ` · ${checked}` : ''}`;
-  if (meta.refreshStatus === 'error') return `Official feed unavailable · last verified ${checked || 'unknown'}`;
-  return `Official feed indexed · ${sourceCount || 4} sources`;
+  if (meta.servingLastVerifiedSnapshot) return `Listings from ${lastVerified || 'the last update'} · updating now`;
+  if (meta.refreshStatus === 'ok' && !meta.stale) return checked ? `Updated ${checked}` : 'Live listings';
+  if (meta.refreshStatus === 'degraded') return `Some theaters not updated${checked ? ` · ${checked}` : ''}`;
+  if (meta.refreshStatus === 'error') return `Listings may be out of date${checked ? ` · last updated ${checked}` : ''}`;
+  return 'Live listings';
 }
 
 function incompleteFeedStatus(payload = {}) {
@@ -695,14 +676,9 @@ function incompleteFeedStatus(payload = {}) {
   const refreshStatus = payload.meta?.refreshStatus || payload.meta?.status || '';
   const initialIndex = ['seed', 'unknown'].includes(String(refreshStatus).toLowerCase())
     || sources.some((source) => ['seed', 'unknown'].includes(String(source.status || '').toLowerCase()));
-  if (initialIndex) return 'Checking official sources for the first live index…';
+  if (initialIndex) return 'Loading listings…';
   const waitingSources = sources.filter((source) => source.required !== false && source.status !== 'verified');
-  const waiting = waitingSources.map((source) => source.name).filter(Boolean);
-  const firstError = waitingSources.flatMap((source) => source.errors || []).find(Boolean);
-  const reason = firstError ? ` · ${String(firstError).replace(/\s+/g, ' ').slice(0, 120)}` : '';
-  return waiting.length
-    ? `Verifying official sources · ${waiting.join(', ')}${reason}`
-    : 'Checking official sources · building the live index';
+  return waitingSources.length ? 'Updating listings…' : 'Loading listings…';
 }
 
 function scheduleIndexRetry(requestId, retryAfterSeconds = 30) {
@@ -862,5 +838,5 @@ const initialScreening = new URLSearchParams(location.search).get('screening');
 if (initialScreening) openDetails(initialScreening);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20261021-pages'));
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20261027-clean'));
 }
