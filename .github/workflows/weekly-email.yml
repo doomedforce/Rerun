@@ -1,0 +1,26 @@
+name: Draft the weekly email
+
+# Wednesday morning in LA, so the draft is ready to review for Thursday.
+# Only ever creates a Buttondown draft: reviewing and sending stays in Buttondown.
+on:
+  schedule:
+    - cron: "23 17 * * 3"
+  workflow_dispatch:
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Save the draft
+        if: env.BUTTONDOWN_API_KEY != ''
+        run: python weekly_email.py --draft
+      - name: Print the issue (no Buttondown key yet)
+        if: env.BUTTONDOWN_API_KEY == ''
+        run: python weekly_email.py

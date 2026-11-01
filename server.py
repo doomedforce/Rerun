@@ -21,12 +21,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 try:
     import refresh as refresh_service
     import alerts as alerts_service
-    import instagram_publisher as instagram_service
     import refresh_worker
 except ImportError:  # pragma: no cover - only relevant when embedded elsewhere
     refresh_service = None
     alerts_service = None
-    instagram_service = None
     refresh_worker = None
 
 
@@ -55,7 +53,6 @@ BLOCKED_STATIC = {
     "/data/snapshot.json",
     "/data/last-verified-snapshot.json",
     "/data/worker-state.json",
-    "/data/instagram-post-state.json",
 }
 REFRESH_LOCK = threading.Lock()
 REFRESH_TOKEN = os.environ.get("RERUN_REFRESH_TOKEN", "")
@@ -458,18 +455,6 @@ class RerunHandler(BaseHTTPRequestHandler):
                 },
                 retry_after=retry_after,
             )
-            return
-        if parsed.path == "/api/instagram/publish":
-            if not refresh_authorized(self.headers):
-                self.send_json(403, {"error": "Instagram publishing requires a valid refresh token."})
-                return
-            if instagram_service is None or not instagram_service.enabled():
-                self.send_json(503, {"error": "Instagram publisher is not configured."})
-                return
-            maybe_refresh(force=True)
-            result = instagram_service.publish_today(force=True)
-            ok = result.get("status") in {"posted", "skipped"}
-            self.send_json(200 if ok else 503, {"ok": ok, **result})
             return
         if parsed.path != "/api/notify":
             self.send_json(404, {"error": "API route not found"})

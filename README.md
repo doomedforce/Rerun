@@ -179,15 +179,6 @@ curl -X POST \
   http://localhost:4173/api/refresh
 ```
 
-After configuring the Instagram secrets, the same authenticated token can
-trigger a one-time current-day post:
-
-```bash
-curl -X POST \
-  -H "X-Rerun-Refresh-Token: $RERUN_REFRESH_TOKEN" \
-  https://your-rerun-host.example/api/instagram/publish
-```
-
 Refresh timing, worker state, and source health are available from
 `GET /api/health` and `GET /api/sources`. `RERUN_WORKER_POLL_SECONDS` controls
 how often the worker checks for a due refresh; `RERUN_REFRESH_TTL_SECONDS`
@@ -209,7 +200,7 @@ GitHub Actions instead:
 2. The site is deployed with `wrangler pages deploy public` only when the
    listings changed, or at least every 3 hours so the "verified … ago" status
    stays honest.
-3. Listings, the crawl cache, posters, and Instagram state carry over between
+3. Listings, the crawl cache and posters carry over between
    runs in the Actions cache (the equivalent of Render's persistent disk).
 
 `_redirects` keeps `/api/screenings` working, `_headers` carries over the
@@ -237,7 +228,6 @@ email signup endpoint.
    | `CLOUDFLARE_API_TOKEN` | yes | deploys |
    | `CLOUDFLARE_ACCOUNT_ID` | yes | deploys |
    | `TMDB_API_KEY` or `TMDB_READ_ACCESS_TOKEN` | no | fallback poster art |
-   | `RERUN_INSTAGRAM_ACCESS_TOKEN`, `RERUN_INSTAGRAM_USER_ID` | no | daily Instagram post |
 
 6. **Actions → "Refresh listings and deploy" → Run workflow** once to confirm,
    then let the hourly schedule take over.
@@ -247,8 +237,6 @@ email signup endpoint.
 - **Export subscribers first.** They live in Render's SQLite file:
   `sqlite3 /var/data/rerun.sqlite3 "select email, created_at from subscribers"`.
   Import them into the KV namespace with `wrangler kv bulk put`.
-- **Remove the Instagram token from Render** (or shut the service down) before
-  the first hourly run, or both will post that day.
 - Then point DNS at Pages and delete the Render service.
 
 ### Build and preview locally
@@ -354,6 +342,25 @@ attribution, image-rights, and commercial-licensing terms before launch.
 - SQLite-backed alert signup connected to the local API
 - Installable/offline shell through `manifest.json` and `service-worker.js`
 
+## Email and event counts
+
+Signups (`functions/api/notify.js`) stay in the `RERUN_SUBSCRIBERS` KV namespace and go on to Buttondown when the
+Pages project has a `BUTTONDOWN_API_KEY` secret. Without the key, or if Buttondown fails, the signup is kept with
+`buttondown: false` so it can be sent later. Buttondown handles the confirmation email and unsubscribes.
+
+`weekly_email.py` drafts the Thursday email from the live listings. `.github/workflows/weekly-email.yml` runs it
+on Wednesday mornings and only ever saves a draft (needs a `BUTTONDOWN_API_KEY` repository secret, otherwise it
+prints the issue to the run log). Reviewing and sending stays in Buttondown.
+
+`functions/api/event.js` counts visits, ticket clicks, saves, calendar adds, shares and signups per day, in the
+`rerun-events` D1 database (binding `RERUN_EVENTS`). It stores counts only: no cookies, no IP addresses. Links we
+post carry `?src=` (for example `https://1rerun.com/?src=reddit`) so each channel can be compared. This week:
+
+```sql
+SELECT source, event, SUM(count) AS total FROM events
+WHERE day >= date('now', '-7 days') GROUP BY source, event ORDER BY source, total DESC;
+```
+
 ## Deployment checklist
 
 1. Attach a Render persistent disk and set `RERUN_DATA_DIR` to its mount path.
@@ -367,31 +374,3 @@ attribution, image-rights, and commercial-licensing terms before launch.
 Useful Render references: [persistent disks](https://render.com/docs/disks),
 [health checks](https://render.com/docs/health-checks), and
 [Blueprint configuration](https://render.com/docs/blueprint-spec).
-
-## Instagram Today in LA publisher
-
-The scheduled worker can publish one daily Instagram post after midnight Pacific
-using Meta's Content Publishing API. It selects future, official-source
-screenings for Los Angeles, prefers one screening per venue, uses the first
-available official image as the post artwork, and records the date and returned
-media ID in `data/instagram-post-state.json` so restarts do not duplicate a post.
-
-Configure these deployment secrets; never commit the access token:
-
-```text
-RERUN_INSTAGRAM_ACCESS_TOKEN=...
-RERUN_PUBLIC_BASE_URL=https://your-rerun-domain.example
-```
-
-The default mode is `instagram-login`, which uses Instagram's
-`graph.instagram.com` API and expects an Instagram Login access token with
-content-publishing permission. For a token obtained through Facebook Login,
-set `RERUN_INSTAGRAM_API_MODE=facebook-login` and also set
-`RERUN_INSTAGRAM_USER_ID` to the professional Instagram account ID.
-
-Optional settings are `RERUN_INSTAGRAM_API_MODE`, `RERUN_INSTAGRAM_USER_ID`,
-`RERUN_INSTAGRAM_API_VERSION`, `RERUN_INSTAGRAM_SELECTION_LIMIT`, and a
-comma-separated `RERUN_INSTAGRAM_FEATURED_IDS` list for editorial overrides.
-The publisher stays disabled until the token and public base URL are present.
-The manual `/api/instagram/publish` route forces a retry after a previous
-publishing error; the scheduled worker still observes the normal retry delay.

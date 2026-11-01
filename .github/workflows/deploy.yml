@@ -16,10 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # Listings, the scraper's page cache, mirrored posters, and Instagram
-      # state persist between runs here (Render used a persistent disk).
+      # Listings, the scraper's page cache and mirrored posters persist
+      # between runs here (Render used a persistent disk).
       RERUN_DATA_DIR: ${{ github.workspace }}/.rerun-state
-      RERUN_INSTAGRAM_ACCESS_TOKEN: ${{ secrets.RERUN_INSTAGRAM_ACCESS_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -56,13 +55,6 @@ jobs:
       - name: Record the successful deploy
         if: steps.build.outputs.deploy == 'true'
         run: mv .rerun-state/pending-deploy.json .rerun-state/last-deploy.json
-
-      - name: Post today's picks to Instagram
-        if: env.RERUN_INSTAGRAM_ACCESS_TOKEN != ''
-        run: python -c "import refresh_worker; refresh_worker.maybe_publish_instagram()"
-        env:
-          RERUN_PUBLIC_BASE_URL: https://1rerun.com
-          RERUN_INSTAGRAM_USER_ID: ${{ secrets.RERUN_INSTAGRAM_USER_ID }}
 
       - name: Save state for the next run
         if: always()

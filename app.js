@@ -8,6 +8,30 @@ let apiRequestId = 0;
 const storage = (() => {
   try { return window.localStorage; } catch (error) { return null; }
 })();
+// Where this visit came from: a ?src= link we posted, or the referring site. Kept for the tab, never tied to a person.
+const REFERRERS = { 'instagram.com': 'instagram', 'reddit.com': 'reddit', 'letterboxd.com': 'letterboxd', 'google.com': 'search', 'bing.com': 'search', 'duckduckgo.com': 'search', 'facebook.com': 'facebook', 'tiktok.com': 'tiktok', 't.co': 'x' };
+const visitSource = (() => {
+  try {
+    const stored = sessionStorage.getItem('rerun-source');
+    if (stored) return stored;
+    let source = (new URLSearchParams(location.search).get('src') || '').toLowerCase();
+    if (!/^[a-z0-9-]{1,24}$/.test(source)) {
+      const host = document.referrer ? new URL(document.referrer).hostname.replace(/^(www|l|m|old|lm)\./, '') : '';
+      source = host === location.hostname ? 'direct' : REFERRERS[host] || (host ? 'other' : 'direct');
+    }
+    sessionStorage.setItem('rerun-source', source);
+    track('visit');
+    return source;
+  } catch (error) { return 'direct'; }
+})();
+function slug(text) { return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48); }
+function track(event, venue = '') {
+  if (!canUseApi || !navigator.sendBeacon) return;
+  let source = 'direct';
+  try { source = sessionStorage.getItem('rerun-source') || source; } catch (error) { /* private mode */ }
+  navigator.sendBeacon(apiUrl('/api/event'), new Blob([JSON.stringify({ event, source, venue: slug(venue) })], { type: 'application/json' }));
+}
+
 // Off by default: Rerun is a Los Angeles guide; these venues are a drive away.
 const OC_VENUES = new Set(['The Frida Cinema', 'Lido Theater']);
 const storedShowOc = (() => {
@@ -66,15 +90,15 @@ const browseDayWord = document.querySelector('#browse-day-word');
 function ensureLogoFallbacks() {
   document.querySelectorAll('img').forEach((image) => {
     const source = image.getAttribute('src') || '';
-    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20261028-oc2';
-    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20261028-oc2';
+    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20261031-ev';
+    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20261031-ev';
     image.addEventListener('error', () => {
       if (image.dataset.logoFallbackApplied) return;
       image.dataset.logoFallbackApplied = 'true';
       if (image.classList.contains('brand-logo') || image.closest('.hero-branding, .calendar-branding')) {
-        image.src = '/assets/rerun-logo.svg?v=20261028-oc2';
+        image.src = '/assets/rerun-logo.svg?v=20261031-ev';
       } else if (image.closest('.footer-brand')) {
-        image.src = '/assets/rerun-mark.svg?v=20261028-oc2';
+        image.src = '/assets/rerun-mark.svg?v=20261031-ev';
       }
     }, { once: true });
   });
@@ -547,6 +571,7 @@ function toggleSaved(id) {
     showToast(`${item.title} removed from saved`);
   } else {
     state.saved.add(id);
+    track('save', item.venue);
     showToast(`${item.title} saved`);
   }
   if (storage) storage.setItem('rerun-saved', JSON.stringify([...state.saved]));
@@ -630,6 +655,7 @@ function downloadCalendar(id) {
   link.download = `${item.id}-rerun.ics`;
   link.click();
   URL.revokeObjectURL(url);
+  track('calendar_add', item.venue);
   showToast('Calendar file downloaded');
 }
 
@@ -641,8 +667,10 @@ async function shareScreening(id) {
   try {
     if (navigator.share) {
       await navigator.share({ title:`${item.title} · Rerun`, text:`${item.title} is playing at ${item.venue}.`, url:shareUrl.href });
+      track('share', item.venue);
     } else if (navigator.clipboard) {
       await navigator.clipboard.writeText(shareUrl.href);
+      track('share', item.venue);
       showToast('Screening link copied');
     } else {
       showToast('Copy the URL to share this screening');
@@ -746,6 +774,11 @@ async function loadScreenings(forceRefresh = false) {
 }
 
 document.addEventListener('click', (event) => {
+  const ticketLink = event.target.closest('a.ticket-link, a.showtime-option, a.dialog-ticket');
+  if (ticketLink) {
+    const item = screenings.find((screening) => (screening.ticketUrl || screening.sourceUrl) === ticketLink.href);
+    track('ticket_click', item?.venue);
+  }
   const ocToggle = event.target.closest('.oc-toggle');
   if (ocToggle) {
     state.showOc = !state.showOc;
@@ -854,6 +887,7 @@ document.querySelector('#newsletter-form')?.addEventListener('submit', async (ev
       return;
     }
     message.textContent = payload.message || 'You’re on the Rerun list.';
+    track('signup');
     form.reset();
   } catch (error) {
     message.textContent = canUseApi ? 'The signup service is offline — try again in a moment.' : 'Preview mode: start the Rerun API to join the list.';
@@ -866,5 +900,5 @@ const initialScreening = new URLSearchParams(location.search).get('screening');
 if (initialScreening) openDetails(initialScreening);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20261028-oc2'));
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20261031-ev'));
 }
