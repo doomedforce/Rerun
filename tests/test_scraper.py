@@ -554,6 +554,15 @@ class ScreeningFormatTests(unittest.TestCase):
         self.assertTrue(all(is_film_listing(*film) for film in films))
         self.assertFalse(any(is_film_listing(*show) for show in shows))
 
+    def test_filmbot_year_ignores_impossible_dates(self):
+        from datetime import datetime
+        from scraper import filmbot_year
+        now = datetime(2026, 11, 2)
+        self.assertEqual(filmbot_year({"dateCreated": "1990-10-06"}, now), "1990")
+        self.assertEqual(filmbot_year({"dateCreated": "2026-12-25"}, now), "2026")
+        self.assertEqual(filmbot_year({"dateCreated": "2990-11-03"}, now), "")
+        self.assertEqual(filmbot_year({}, now), "")
+
     def test_lido_event_page(self):
         from scraper import parse_lido_events
         lido = ('<article class="eventlist-event eventlist-event--upcoming eventlist-event--hasimg"><a href="/events/hocus-pocus-102926">'

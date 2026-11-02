@@ -6049,6 +6049,12 @@ def parse_filmbot_movie(html: str) -> tuple[dict, list[dict]]:
     return movie, screenings
 
 
+def filmbot_year(movie: dict, current: datetime) -> str:
+    """The film's year, or "" for a date that can't be real (the Art Theatre has listed a 1990 episode as 2990)."""
+    year = str(movie.get("dateCreated", ""))[:4]
+    return year if year.isdigit() and int(year) <= current.year + 2 else ""
+
+
 def _scrape_filmbot(source_id: str, current: datetime, fetcher: CachedFetcher, force: bool) -> dict:
     site = FILMBOT_SITES[source_id]
     started = time.monotonic()
@@ -6071,7 +6077,7 @@ def _scrape_filmbot(source_id: str, current: datetime, fetcher: CachedFetcher, f
             if not result:
                 continue
             movie, screenings = parse_filmbot_movie(result[0])
-            year = str(movie.get("dateCreated", ""))[:4]
+            year = filmbot_year(movie, current)
             if year.isdigit() and int(year) > current.year - FILMBOT_REPERTORY_YEARS:
                 continue  # a new release, not repertory
             directors = movie.get("director") or []
