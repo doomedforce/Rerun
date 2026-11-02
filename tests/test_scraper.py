@@ -1059,6 +1059,34 @@ class ScraperTests(unittest.TestCase):
             self.assertEqual(mocked_urlopen.call_count, 2)
             self.assertEqual(fetcher.network_requests, 2)
 
+    def test_cached_fetcher_keeps_the_last_good_page_after_a_rate_limit(self):
+        with TemporaryDirectory() as cache_dir:
+            fetcher = scraper.CachedFetcher(cache_dir=Path(cache_dir), request_gap=0, retries=0)
+            url = "https://example.test/movie"
+            limited = HTTPError(url, 429, "too many requests", {}, None)
+            with patch.object(scraper, "urlopen", side_effect=limited):
+                with self.assertRaises(HTTPError):
+                    fetcher.fetch(url, force=True)  # no earlier copy to fall back on
+            fetcher._path_for(url).write_text("<html>last good</html>", encoding="utf-8")
+            with patch.object(scraper, "urlopen", side_effect=limited):
+                self.assertEqual(fetcher.fetch(url, force=True)[0], "<html>last good</html>")
+            self.assertEqual(fetcher.stale_pages, 1)
+            gone = HTTPError(url, 404, "not found", {}, None)
+            with patch.object(scraper, "urlopen", side_effect=gone):
+                with self.assertRaises(HTTPError):
+                    fetcher.fetch(url, force=True)  # a removed page must not linger
+
+    def test_cached_fetcher_paces_rate_limited_hosts(self):
+        with TemporaryDirectory() as cache_dir:
+            fetcher = scraper.CachedFetcher(cache_dir=Path(cache_dir), request_gap=0)
+            with patch.object(scraper.time, "sleep") as sleep:
+                fetcher._wait_for_host("thefridacinema.org")
+                fetcher._wait_for_host("thefridacinema.org")
+                fetcher._wait_for_host("example.test")
+                fetcher._wait_for_host("example.test")
+            self.assertEqual(sleep.call_count, 1)
+            self.assertGreater(sleep.call_args[0][0], 1)
+
     def test_cached_fetcher_gives_veezi_a_longer_timeout(self):
         class Response:
             headers = {}

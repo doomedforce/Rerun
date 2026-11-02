@@ -135,6 +135,9 @@ TMDB_POSTER_PATH_RE = re.compile(r"^/[A-Za-z0-9._-]+$")
 TMDB_RELEASE_YEAR_RE = re.compile(r"^(?:18|19|20)\d{2}$")
 
 TRANSIENT_HTTP_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+# Filmbot sites answer a fast crawl with 429s, which would drop their films from the feed.
+PACED_HOSTS = frozenset({"thefridacinema.org", "arttheatrelongbeach.org", "studios.wearebraindead.com"})
+PACED_REQUEST_GAP = float(os.environ.get("RERUN_PACED_REQUEST_GAP_SECONDS", "1.5"))
 
 AC_NOW_SHOWING_URL = "https://www.americancinematheque.com/now-showing/"
 AC_HOME_URL = "https://www.americancinematheque.com/"
@@ -1318,6 +1321,7 @@ class CachedFetcher:
         self._stats_lock = threading.Lock()
         self.cache_hits = 0
         self.network_requests = 0
+        self.stale_pages = 0
 
     def _path_for(self, url: str) -> Path:
         digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
@@ -1347,12 +1351,23 @@ class CachedFetcher:
                 self._host_state[host] = state
         host_lock, last_request_state = state
         with host_lock:
+            gap = max(self.request_gap, PACED_REQUEST_GAP) if host.removeprefix("www.") in PACED_HOSTS else self.request_gap
             last_request = last_request_state[0]
             now = time.monotonic()
-            wait = self.request_gap - (now - last_request)
-            last_request_state[0] = max(now, last_request) + self.request_gap
+            # last_request holds the next free slot, so waiters queue behind one another
+            wait = last_request - now
+            last_request_state[0] = max(now, last_request) + gap
         if wait > 0:
             time.sleep(wait)
+
+    def _last_good_page(self, cache_path: Path, error: Exception) -> tuple[str, str, bool]:
+        """After a temporary failure, the last copy beats losing the theater's films. Past shows filter out later."""
+        if not cache_path.is_file():
+            raise error
+        with self._stats_lock:
+            self.stale_pages += 1
+        checked_at = iso_utc(datetime.fromtimestamp(cache_path.stat().st_mtime, timezone.utc))
+        return cache_path.read_text(encoding="utf-8", errors="replace"), checked_at, True
 
     def fetch(self, url: str, force: bool = False) -> tuple[str, str, bool]:
         cache_path = self._path_for(url)
@@ -1416,14 +1431,16 @@ class CachedFetcher:
                 return text, iso_utc(), False
             except HTTPError as error:
                 last_error = error
-                if error.code not in TRANSIENT_HTTP_STATUS or attempt >= self.retries:
+                if error.code not in TRANSIENT_HTTP_STATUS:
                     raise
+                if attempt >= self.retries:
+                    return self._last_good_page(cache_path, error)
                 retry_after = self._retry_after_seconds(error.headers.get("Retry-After"))
                 delay = retry_after if retry_after is not None else min(0.25 * (2**attempt), self.retry_max_seconds)
             except (URLError, TimeoutError, OSError) as error:
                 last_error = error
                 if attempt >= self.retries:
-                    raise
+                    return self._last_good_page(cache_path, error)
                 delay = min(0.25 * (2**attempt), self.retry_max_seconds)
             if delay > 0:
                 time.sleep(min(delay, self.retry_max_seconds))
