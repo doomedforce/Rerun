@@ -90,15 +90,15 @@ const browseDayWord = document.querySelector('#browse-day-word');
 function ensureLogoFallbacks() {
   document.querySelectorAll('img').forEach((image) => {
     const source = image.getAttribute('src') || '';
-    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20261102-tags';
-    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20261102-tags';
+    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20261102-logo';
+    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20261102-logo';
     image.addEventListener('error', () => {
       if (image.dataset.logoFallbackApplied) return;
       image.dataset.logoFallbackApplied = 'true';
-      if (image.classList.contains('brand-logo') || image.closest('.hero-branding, .calendar-branding')) {
-        image.src = '/assets/rerun-logo.svg?v=20261102-tags';
+      if (image.classList.contains('brand-logo')) {
+        image.src = '/assets/rerun-logo.svg?v=20261102-logo';
       } else if (image.closest('.footer-brand')) {
-        image.src = '/assets/rerun-mark.svg?v=20261102-tags';
+        image.src = '/assets/rerun-mark.svg?v=20261102-logo';
       }
     }, { once: true });
   });
@@ -896,5 +896,5 @@ const initialScreening = new URLSearchParams(location.search).get('screening');
 if (initialScreening) openDetails(initialScreening);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20261102-tags'));
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20261102-logo'));
 }

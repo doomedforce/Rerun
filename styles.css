@@ -121,8 +121,6 @@ button { -webkit-tap-highlight-color: transparent; }
   border-bottom: 1px solid var(--line);
 }
 .calendar-page-heading { max-width: 760px; padding-top: clamp(5rem, 13vw, 11rem); }
-.calendar-branding { margin-bottom: 1.8rem; }
-.calendar-branding .brand-logo { width: clamp(160px, 21vw, 230px); height: auto; aspect-ratio: 420 / 80; }
 .calendar-page-heading h1 { font: 500 clamp(4.5rem, 10vw, 9.5rem) / .82 var(--serif); letter-spacing: -.075em; margin: 1.4rem 0 1.8rem; font-variation-settings: "SOFT" 72, "WONK" 1; }
 .calendar-page-heading h1 em { color: var(--red); font-weight: 400; }
 .calendar-page-heading p { max-width: 440px; margin-left: clamp(0rem, 10vw, 9rem); color: var(--paper-dim); font-size: 1.05rem; line-height: 1.5; }
@@ -177,16 +175,6 @@ button { -webkit-tap-highlight-color: transparent; }
   z-index: 2;
 }
 .hero-copy { max-width: 800px; }
-.hero-branding, .calendar-branding {
-  display: flex;
-  align-items: center;
-  gap: .7rem;
-  color: var(--gold);
-  font: 500 0.72rem var(--mono);
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-.hero-branding .brand-logo { width: clamp(150px, 19vw, 210px); height: auto; aspect-ratio: 420 / 80; }
 .hero h1 {
   font: 500 clamp(5rem, 13vw, 13.5rem) / .73 var(--serif);
   letter-spacing: -.08em;
