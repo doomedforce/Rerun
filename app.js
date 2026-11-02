@@ -90,15 +90,15 @@ const browseDayWord = document.querySelector('#browse-day-word');
 function ensureLogoFallbacks() {
   document.querySelectorAll('img').forEach((image) => {
     const source = image.getAttribute('src') || '';
-    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20261031-ev';
-    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20261031-ev';
+    if (source.includes('rerun-logo.svg')) image.src = '/assets/rerun-logo.png?v=20261102-tags';
+    if (source.includes('rerun-mark.svg')) image.src = '/assets/rerun-mark.png?v=20261102-tags';
     image.addEventListener('error', () => {
       if (image.dataset.logoFallbackApplied) return;
       image.dataset.logoFallbackApplied = 'true';
       if (image.classList.contains('brand-logo') || image.closest('.hero-branding, .calendar-branding')) {
-        image.src = '/assets/rerun-logo.svg?v=20261031-ev';
+        image.src = '/assets/rerun-logo.svg?v=20261102-tags';
       } else if (image.closest('.footer-brand')) {
-        image.src = '/assets/rerun-mark.svg?v=20261031-ev';
+        image.src = '/assets/rerun-mark.svg?v=20261102-tags';
       }
     }, { once: true });
   });
@@ -191,10 +191,6 @@ function setRefreshBusy(busy) {
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[character]));
-}
-
-function cityLabel(value) {
-  return { 'los-angeles':'Los Angeles', 'new-york':'New York', 'san-francisco':'San Francisco', arcata:'Arcata' }[value] || value;
 }
 
 function timeValue(time) {
@@ -469,7 +465,7 @@ function cardFor(item) {
   } else {
     posterImage.remove();
   }
-  fragment.querySelector('.poster-kicker').textContent = [known(primary.year), primary.genre || 'Repertory'].filter(Boolean).join(' / ');
+  fragment.querySelector('.poster-kicker').textContent = known(primary.year);
   const titleText = primary.title || 'Untitled screening';
   const posterTitle = fragment.querySelector('.poster-title');
   posterTitle.textContent = titleText;
@@ -543,7 +539,7 @@ function render() {
     if (emptyHeading) emptyHeading.textContent = 'No saved screenings found.';
     if (emptyMessage) emptyMessage.textContent = 'Use Save on any screening card to build your list.';
   }
-  if (resultCount) resultCount.textContent = `${groupedItems.length} film${groupedItems.length === 1 ? '' : 's'} · ${items.length} show${items.length === 1 ? '' : 's'} · ${cityLabel(state.city)}${state.showOc ? ' + Orange County' : ''}`;
+  if (resultCount) resultCount.textContent = `${groupedItems.length} film${groupedItems.length === 1 ? '' : 's'} · ${items.length} show${items.length === 1 ? '' : 's'} · Los Angeles${state.showOc ? ' + Orange County' : ''}`;
   if (citySelect) citySelect.value = state.city;
   updateSavedCounts();
   if (calendarMode) renderCalendar(items);
@@ -595,7 +591,7 @@ function openDetails(id) {
   const sourceActionLabel = item.sourceStatus === 'partner-fallback' ? 'Open partner listing' : `Verify on ${sourceName}`;
   const ticketAction = listingAction(item);
   const ticketActionLabel = ticketAction.label;
-  dialogContent.innerHTML = `<div class="dialog-body"><div class="dialog-poster" style="--poster-color:${escapeHtml(item.color || '#a92f23')}">${image}<span class="eyebrow">${escapeHtml([known(item.year), item.genre || 'Repertory'].filter(Boolean).join(' / '))}</span><strong>${escapeHtml(item.title || 'Untitled screening')}</strong>${known(item.format) ? `<span class="eyebrow">${escapeHtml(known(item.format))}</span>` : ''}</div><div class="dialog-info"><span class="eyebrow">Screening details</span><h2>${escapeHtml(item.title || 'Untitled screening')}</h2>${known(item.synopsis) ? `<p>${escapeHtml(item.synopsis)}</p>` : ''}<div class="detail-row"><span>When</span><strong>${escapeHtml(item.date || 'Date TBA')} · ${escapeHtml(whenLabel)}</strong></div><div class="detail-row"><span>Where</span><strong>${escapeHtml(item.venue || 'Venue TBA')} · ${escapeHtml(item.neighborhood || item.distance || 'Los Angeles')}</strong></div>${addressRow}${known(item.director) ? `<div class="detail-row"><span>Director</span><strong>${escapeHtml(item.director)}</strong></div>` : ''}${notesRow}${checkedRow}<a class="dialog-ticket" href="${escapeHtml(item.ticketUrl || sourceUrl)}" target="_blank" rel="noopener noreferrer">${ticketActionLabel} ↗</a><a class="dialog-source" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(sourceActionLabel)} ↗</a><div class="dialog-actions"><button class="dialog-calendar" type="button" data-id="${escapeHtml(item.id)}">Add to calendar ↓</button><button class="dialog-share" type="button" data-id="${escapeHtml(item.id)}">Share screening ↗</button></div></div></div>`;
+  dialogContent.innerHTML = `<div class="dialog-body"><div class="dialog-poster" style="--poster-color:${escapeHtml(item.color || '#a92f23')}">${image}<span class="eyebrow">${escapeHtml(known(item.year))}</span><strong>${escapeHtml(item.title || 'Untitled screening')}</strong>${known(item.format) ? `<span class="eyebrow">${escapeHtml(known(item.format))}</span>` : ''}</div><div class="dialog-info"><h2>${escapeHtml(item.title || 'Untitled screening')}</h2>${known(item.synopsis) ? `<p>${escapeHtml(item.synopsis)}</p>` : ''}<div class="detail-row"><span>When</span><strong>${escapeHtml(item.date || 'Date TBA')} · ${escapeHtml(whenLabel)}</strong></div><div class="detail-row"><span>Where</span><strong>${escapeHtml(item.venue || 'Venue TBA')} · ${escapeHtml(item.neighborhood || item.distance || 'Los Angeles')}</strong></div>${addressRow}${known(item.director) ? `<div class="detail-row"><span>Director</span><strong>${escapeHtml(item.director)}</strong></div>` : ''}${notesRow}${checkedRow}<a class="dialog-ticket" href="${escapeHtml(item.ticketUrl || sourceUrl)}" target="_blank" rel="noopener noreferrer">${ticketActionLabel} ↗</a><a class="dialog-source" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(sourceActionLabel)} ↗</a><div class="dialog-actions"><button class="dialog-calendar" type="button" data-id="${escapeHtml(item.id)}">Add to calendar ↓</button><button class="dialog-share" type="button" data-id="${escapeHtml(item.id)}">Share screening ↗</button></div></div></div>`;
   const dialogImage = dialogContent.querySelector('.dialog-poster-image');
   if (dialogImage) dialogImage.addEventListener('error', () => dialogImage.remove());
   dialog.showModal();
@@ -900,5 +896,5 @@ const initialScreening = new URLSearchParams(location.search).get('screening');
 if (initialScreening) openDetails(initialScreening);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20261031-ev'));
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js?v=20261102-tags'));
 }

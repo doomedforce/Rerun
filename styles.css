@@ -121,6 +121,8 @@ button { -webkit-tap-highlight-color: transparent; }
   border-bottom: 1px solid var(--line);
 }
 .calendar-page-heading { max-width: 760px; padding-top: clamp(5rem, 13vw, 11rem); }
+.calendar-branding { margin-bottom: 1.8rem; }
+.calendar-branding .brand-logo { width: clamp(160px, 21vw, 230px); height: auto; aspect-ratio: 420 / 80; }
 .calendar-page-heading h1 { font: 500 clamp(4.5rem, 10vw, 9.5rem) / .82 var(--serif); letter-spacing: -.075em; margin: 1.4rem 0 1.8rem; font-variation-settings: "SOFT" 72, "WONK" 1; }
 .calendar-page-heading h1 em { color: var(--red); font-weight: 400; }
 .calendar-page-heading p { max-width: 440px; margin-left: clamp(0rem, 10vw, 9rem); color: var(--paper-dim); font-size: 1.05rem; line-height: 1.5; }
@@ -160,14 +162,12 @@ button { -webkit-tap-highlight-color: transparent; }
   background: radial-gradient(circle, var(--gold) 0 2px, transparent 2.5px) 0 50% / 16px 10px repeat-x;
   opacity: .5;
 }
-.hero-topline { display: flex; justify-content: flex-end; align-items: center; gap: 2rem; }
 .eyebrow {
   font: 500 0.76rem var(--mono);
   text-transform: uppercase;
   letter-spacing: .1em;
   color: var(--paper-dim);
 }
-.marquee-label { color: var(--gold); }
 .hero-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, .62fr);
@@ -224,8 +224,6 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .hero-bottom > a span { font-size: 1rem; color: var(--gold); }
 
-.calendar-branding { margin-bottom: 1.8rem; }
-.calendar-branding .brand-logo { width: clamp(160px, 21vw, 230px); height: auto; aspect-ratio: 420 / 80; }
 
 .browse { padding: clamp(5rem, 9vw, 9rem) var(--pad); background: var(--night-soft); border-top: 1px solid var(--line); }
 .section-top { display: flex; justify-content: space-between; align-items: end; gap: 2rem; }
@@ -445,7 +443,6 @@ footer a { color: var(--gold); }
   .brand-logo { width: 116px; height: 22px; }
   .mobile-nav { top: 66px; }
   .hero { min-height: calc(100svh - 66px); padding-top: 3.5rem; }
-  .hero-topline { align-items: flex-start; }
   .hero h1 { font-size: 4.7rem; margin: 3.4rem 0 2rem; }
   .hero-copy p { margin-left: 0; max-width: 280px; }
   .day-navigator { gap: .35rem; }
