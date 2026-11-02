@@ -554,6 +554,26 @@ class ScreeningFormatTests(unittest.TestCase):
         self.assertTrue(all(is_film_listing(*film) for film in films))
         self.assertFalse(any(is_film_listing(*show) for show in shows))
 
+    def test_page_text_skips_styles_and_scripts(self):
+        from scraper import parse_html
+        parser = parse_html('<style>:root{--wp--preset--x:1}</style><script>var a = "35mm";</script><p>Rushmore</p>')
+        self.assertEqual(parser.lines, ["Rushmore"])
+
+    def test_listing_text_rejects_code(self):
+        from scraper import clean_director, looks_like_code
+        self.assertTrue(looks_like_code(":root{--wp--preset--aspect-ratio--square: 1;"))
+        self.assertTrue(looks_like_code("<div class=x>"))
+        self.assertFalse(looks_like_code("Q&A with the director · 35mm"))
+        self.assertFalse(looks_like_code("A < B is a film about math"))
+        self.assertEqual(clean_director("Wes Anderson Run Time: 93 min."), "Wes Anderson")
+        self.assertEqual(clean_director("Bill Roberts, Hamilton Luske, Jack Kinney"), "Bill Roberts, Hamilton Luske, Jack Kinney")
+        self.assertEqual(clean_director("David Fincher and cinematographer Darius Khondji worked with the lab to create a small number of prints"), "")
+
+    def test_academy_urls_come_from_cms_slugs(self):
+        from scraper import discover_academy_event_urls
+        html = r'<script>self.__next_f.push(["{\\"slug\\":\\"gremlins-019fceba-f20a-417b-ed3c-bd5163cf63fa\\"}"])</script>'
+        self.assertEqual(discover_academy_event_urls(html), ["https://www.academymuseum.org/en/programs/detail/gremlins-019fceba-f20a-417b-ed3c-bd5163cf63fa/"])
+
     def test_filmbot_year_ignores_impossible_dates(self):
         from datetime import datetime
         from scraper import filmbot_year

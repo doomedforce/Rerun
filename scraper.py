@@ -646,9 +646,11 @@ class PageParser(HTMLParser):
         "ul",
     }
     HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5"}
+    INVISIBLE_TAGS = {"script", "style"}
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
+        self._invisible = 0
         self._text: list[str] = []
         self._anchor: dict | None = None
         self._heading: dict | None = None
@@ -659,6 +661,8 @@ class PageParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_map = {key.lower(): value or "" for key, value in attrs}
+        if tag in self.INVISIBLE_TAGS:
+            self._invisible += 1
         if tag in self.BLOCK_TAGS:
             self._text.append("\n")
         if tag in self.HEADING_TAGS:
@@ -694,6 +698,8 @@ class PageParser(HTMLParser):
                 self.meta[key.lower()] = attrs_map["content"]
 
     def handle_endtag(self, tag: str) -> None:
+        if tag in self.INVISIBLE_TAGS and self._invisible:
+            self._invisible -= 1
         if tag == "a" and self._anchor is not None:
             self.links.append(
                 {
@@ -715,7 +721,7 @@ class PageParser(HTMLParser):
             self._text.append("\n")
 
     def handle_data(self, data: str) -> None:
-        if not data:
+        if not data or self._invisible:
             return
         self._text.append(data)
         if self._anchor is not None:
@@ -1111,6 +1117,11 @@ def discover_academy_event_urls(html: str, base_url: str = ACADEMY_CALENDAR_URL)
             r"(?:https?://[^\"'<> ]+)?/(?:en/)?programs/detail/[A-Za-z0-9%._~:/?#\[\]@!$&'()*+,;=-]+",
             embedded_html,
         )
+    )
+    # The calendar's CMS data names most programs only by slug, with no link to follow.
+    candidates.extend(
+        urljoin(base_url, f"/en/programs/detail/{slug}")
+        for slug in re.findall(r'slug\\*":\\*"([a-z0-9-]+-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\\*"', html)
     )
     urls: list[str] = []
     for candidate in candidates:
@@ -2033,6 +2044,19 @@ def program_details(details_by_key: dict, title: str) -> dict:
     return {}
 
 
+def looks_like_code(text: str) -> bool:
+    """A last check on page text: a stray stylesheet or template must never reach a listing."""
+    return bool(re.search(r"[{}]|--wp--|:root\b|</?[a-z][a-z0-9-]*[\s>]", text, re.I))
+
+
+def clean_director(value: str) -> str:
+    """Just the names: some pages run the next spec into this field, or put a sentence in it."""
+    text = normalize_space(value)
+    text = re.split(r"\s+(?:run ?time|rating|format|starring|screenwriters?|producers?)\s*:", text, maxsplit=1, flags=re.I)[0]
+    # shortcut: over 14 words is treated as prose, upgrade if a film ever credits a longer list
+    return "" if len(text.split()) > 14 or looks_like_code(text) else text.strip(" ,;")
+
+
 def make_event(
     *,
     source_id: str,
@@ -2058,7 +2082,8 @@ def make_event(
     local_start = as_la(start_at)
     clean_title = normalize_space(title)
     event_id = f"{source_id}-{slugify(clean_title)}-{slugify(venue_data['name'])}-{local_start.strftime('%Y%m%d-%H%M')}"
-    clean_synopsis = normalize_space(synopsis)
+    clean_synopsis = "" if looks_like_code(synopsis) else normalize_space(synopsis)
+    notes = "" if looks_like_code(notes) else notes
     genre = infer_genre(clean_title, notes, clean_synopsis, source_name)
     if local_start.hour >= 22 and genre == "Repertory":
         genre = "Midnight"
@@ -2066,7 +2091,7 @@ def make_event(
         "id": event_id,
         "city": "los-angeles",
         "title": clean_title,
-        "director": normalize_space(director) or "Not listed",
+        "director": clean_director(director) or "Not listed",
         "year": normalize_space(year) or "—",
         "format": screening_format(format_name, clean_title, venue_data["name"]),
         "venue": venue_data["name"],
@@ -2988,7 +3013,7 @@ def parse_vidiots_movie_detail(html: str, page_url: str, now: datetime | None = 
     note_lines = []
     for line in lines:
         lowered = normalize_key(line)
-        if any(marker in lowered for marker in ("q&a", "special guest", "sold out", "matinee", "midnight", "35mm", "16mm", "dcp")):
+        if any(marker in lowered for marker in ("q&a", "special guest", "sold out", "matinee", "midnight", "35mm", "16mm", "dcp")) and len(line) <= 80 and not line.startswith(("*", "Watch trailer", "Dates with", "Format:")) and title not in line and "Vidiots" not in line:
             note_lines.append(line)
     notes = " · ".join(dict.fromkeys(note_lines))[:220]
     return {
@@ -2996,7 +3021,8 @@ def parse_vidiots_movie_detail(html: str, page_url: str, now: datetime | None = 
         "showtimes": parse_vidiots_showtimes(lines, now, parser.links, page_url),
         "director": first_label_value(lines, ("Director", "Directed by")),
         "year": year_label or (year_matches[-1] if year_matches else ""),
-        "format": vista_format_from_text(lines),
+        # the spec line alone: the rest of the page advertises DVDs and other prints
+        "format": vista_format_from_text([first_label_value(lines, ("Format",)) or " ".join(lines)]),
         "synopsis": synopsis,
         "notes": notes,
         "ticketUrl": pick_ticket_url(parser, page_url),
